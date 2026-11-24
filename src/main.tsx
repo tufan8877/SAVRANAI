@@ -68,6 +68,7 @@ function App(){
   const [handsFree,setHandsFree]=useState(false)
   const [voicePrompt,setVoicePrompt]=useState(true)
   const recognition=useRef<Recognition|null>(null)
+  const followupUntil=useRef(0)
   const latestVoice=useRef<(text:string)=>boolean>(()=>false)
   const engine=useRef(new AudioEngine())
   const level=useRef(0)
@@ -137,7 +138,7 @@ function App(){
     if(!online)return
     const ctl=new AbortController()
     fetch('/api/config',{signal:ctl.signal}).then(response=>{if(!response.ok)throw new Error();return response.json()}).then(setConfig).catch(()=>{
-      if(!ctl.signal.aborted)setNotice('Der SAVRAN-Server ist momentan nicht erreichbar.')
+      if(!ctl.signal.aborted)setNotice('Der CORE-Server ist momentan nicht erreichbar.')
     })
     return ()=>ctl.abort()
   },[online])
@@ -162,6 +163,7 @@ function App(){
     return true
   }
   function stopAssistant(){
+    followupUntil.current=0
     recognition.current?.abort()
     setHandsFree(false);
   }
@@ -198,10 +200,10 @@ function App(){
     const timeout=setTimeout(()=>controller.abort(),25000)
     try{
       await engine.current.unlock()
-      let answer='Hallo, hier ist SAVRAN. Dies ist ein Sprachtest.'
+      let answer='Hallo, hier ist CORE. Dies ist ein Sprachtest.'
       if(kind==='assistant'){
         stage='Groq'
-        const response=await api('chat',session,{method:'POST',signal:controller.signal,body:JSON.stringify({text:'Antworte nur mit: Hallo, hier ist SAVRAN.',language:'de'})})
+        const response=await api('chat',session,{method:'POST',signal:controller.signal,body:JSON.stringify({text:'Antworte nur mit: Hallo, hier ist CORE.',language:'de'})})
         answer=''
         await consumeChat(response,piece=>{answer+=piece})
         if(!answer.trim())throw new Error('Keine Textantwort erhalten.')
@@ -276,12 +278,13 @@ function App(){
   }
   latestVoice.current=(text)=>{
     const command=text.trim()
-    const wake=command.match(/^hey[\s,!.:-]+savran\b[\s,!.?:-]*/i)
-    if(!wake)return false
-    const request=command.slice(wake[0].length).trim()
+    const wake=command.match(/^hey[\s,!.:-]+(?:core|kor|kore|chor)\b[\s,!.?:-]*/i)
+    if(!wake&&Date.now()>followupUntil.current)return false
+    followupUntil.current=0
+    const request=wake?command.slice(wake[0].length).trim():command
     recognition.current?.abort()
     if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(request)){stopAssistant();return true}
-    if(!request)void speak('Ja, ich bin bereit. Sage Hey SAVRAN und deine Frage.')
+    if(!request)void speak('Ja, ich höre zu.').then(()=>{followupUntil.current=Date.now()+12000})
     else void send(request,undefined,true)
     return true
   }
@@ -320,6 +323,16 @@ function App(){
     retry(900)
     return ()=>{active=false;clearTimeout(timer);r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
+  async function activateCore(){
+    if(busy||!permitted('chat')||!permitted('speech'))return
+    try{
+      await engine.current.unlock()
+      recognition.current?.abort()
+      setVoicePrompt(false);setHandsFree(true)
+      await speak('Ja, ich höre zu.')
+      followupUntil.current=Date.now()+12000
+    }catch(error){report(error)}
+  }
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
     if(busy||!permitted('chat')||!permitted('speech'))return
@@ -378,7 +391,7 @@ function App(){
   const setup=config?(authMode&&!config.auth?'Supabase einrichten':!config.chat?'Groq einrichten':guest?'Gastmodus':null):null
   return <div className="app">
     <header className="topbar">
-      <button className="brand" aria-label="SAVRAN Startseite" onClick={()=>{if(!busy){reset();close()}}}><Mark/><span><b>S.A.V.R.A.N.</b><small>KI-KOMMANDOZENTRALE</small></span></button>
+      <button className="brand" aria-label="CORE Startseite" onClick={()=>{if(!busy){reset();close()}}}><Mark/><span><b>INTEL AI CORE</b><small>KI-KOMMANDOZENTRALE</small></span></button>
       <div className="top-actions"><Time/>{authMode&&<><span className="top-separator"/><button className="profile-btn" onClick={()=>switchPanel('profile')}><UserRound size={17}/><span>{session?(profile.name||'Profil'):'Anmelden'}</span></button></>}</div>
     </header>
     <nav className="rail" aria-label="Kommandonavigation">
@@ -393,17 +406,17 @@ function App(){
     <main className="command">
       <div className="stage">
         <div className="core-label"><span/> NEURALER KERN <span/></div>
-        <Orb mode={state} level={level} reduced={reduced}/>
-        <div className="identity"><h1>S.A.V.R.A.N.</h1><p>Smart Adaptive Virtual Reasoning and Assistance Network</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey SAVRAN':labels[state]}</div></div>
+        <button type="button" aria-label="CORE aktivieren" title="CORE aktivieren" disabled={busy} onClick={()=>void activateCore()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
+        <div className="identity"><h1>INTEL AI CORE</h1><p>Intelligent AI Core · Dein persönlicher KI-Assistent</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey CORE':labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
-        {!notice&&last&&<div className="latest" aria-live={phase==='PROCESSING'?'off':'polite'}><b>{last.role==='assistant'?'SAVRAN':'Du'}</b><div>{last.content}</div><button className="icon-button" title="Gespräch öffnen" aria-label="Gespräch öffnen" onClick={()=>setPanel('history')}><ChevronDown size={16}/></button></div>}
+        {!notice&&last&&<div className="latest" aria-live={phase==='PROCESSING'?'off':'polite'}><b>{last.role==='assistant'?'CORE':'Du'}</b><div>{last.content}</div><button className="icon-button" title="Gespräch öffnen" aria-label="Gespräch öffnen" onClick={()=>setPanel('history')}><ChevronDown size={16}/></button></div>}
         {!last&&!notice&&<div className="suggestions">{suggestions.map(({icon:Icon,label,prompt})=><button key={label} onClick={()=>{setInput(prompt);inputRef.current?.focus()}}><Icon size={15}/>{label}</button>)}</div>}
         <form className="composer" onSubmit={submit}>
           <input type="file" accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.webp" hidden ref={fileRef} onChange={e=>{void attach(e.target.files?.[0]);e.target.value=''}}/>
           <button type="button" className="icon-button attachment" aria-label="Dateiformat prüfen" title="Dateiformat prüfen" onClick={()=>{if(guest||session)fileRef.current?.click();else if(authMode)setPanel('profile')}}><Paperclip size={18}/></button>
-          <textarea ref={inputRef} aria-label="Nachricht an SAVRAN" placeholder="Nachricht an SAVRAN …" rows={2} value={input} maxLength={8000} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();if(!busy)void send()}}}/>
+          <textarea ref={inputRef} aria-label="Nachricht an CORE" placeholder="Nachricht an CORE …" rows={2} value={input} maxLength={8000} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();if(!busy)void send()}}}/>
           <button type="button" className={'icon-button mic '+(phase==='LISTENING'?'recording':'')} aria-label={phase==='LISTENING'?'Aufnahme beenden':'Mikrofon aktivieren'} disabled={phase==='PROCESSING'} onClick={()=>void microphone()}>{phase==='LISTENING'?<Square size={16}/>:<Mic size={19}/>}</button>
           {(phase==='SPEAKING'||phase==='PROCESSING')&&<button type="button" className="icon-button" aria-label="Unterbrechen" title="Unterbrechen" onClick={interrupt}><Square size={16}/></button>}
           <button type="submit" className="send" aria-label="Nachricht senden" disabled={busy||!input.trim()}><ArrowUp size={21}/></button>
@@ -411,8 +424,8 @@ function App(){
         <div className="composer-meta"><span><AudioLines size={13}/> SPRACHE & TEXT</span><button type="button" aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{color:handsFree?'#55e6ff':undefined,background:'transparent',border:'1px solid currentColor',borderRadius:6,padding:'4px 7px',cursor:'pointer'}}>{handsFree?'Sprachmodus: AN':'Sprachmodus starten'}</button><span>{setup||'ENTER ZUM SENDEN'}</span></div>
       </div>
     </main>
-    <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>SAVRAN.AI</span><button className="install" onClick={async()=>{if(install){await install.prompt();await install.userChoice;setInstall(undefined)}else setInstallHelp(v=>!v)}}><Download size={13}/> Installieren</button></footer>
-    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>SAVRAN Sprachmodus</h2><p>Erlaube das Mikrofon und beginne jede Frage mit „Hey SAVRAN“. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{setVoicePrompt(false);void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
+    <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>intelaicore.org</span><button className="install" onClick={async()=>{if(install){await install.prompt();await install.userChoice;setInstall(undefined)}else setInstallHelp(v=>!v)}}><Download size={13}/> Installieren</button></footer>
+    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und beginne jede Frage mit „Hey CORE“. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{setVoicePrompt(false);void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
     {installHelp&&<div className="install-help" role="status">iOS: In Safari „Teilen“ und „Zum Home-Bildschirm“ wählen. Auf Android oder Desktop die Installationsoption im Browsermenü öffnen.</div>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
       {panel==='history'&&(guest||session&&!recovery?<History guest={guest} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
