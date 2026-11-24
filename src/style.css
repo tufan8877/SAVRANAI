@@ -195,3 +195,9 @@ footer i{background:#70a28a;box-shadow:0 0 8px #70a28a91}
 .stage .identity p{margin:0;max-width:100%;font-size:clamp(12px,1.5vw,14px);line-height:1.5;letter-spacing:.04em;text-wrap:balance}
 .stage .identity .status{margin:0;max-width:100%}
 @media(max-width:700px){.stage .identity{gap:6px;padding:0 8px}.stage .identity p{max-width:320px}}
+
+/* Connection indicator stays independent of voice activity. */
+.stage .identity .status{letter-spacing:.025em;text-transform:none;text-align:center;line-height:1.45}
+.stage .identity .status i{flex:0 0 7px;width:7px;height:7px}
+.stage .identity .status.connection-online i,footer i:not(.off){background:#42cf79;box-shadow:0 0 8px #42cf7980}
+.stage .identity .status.connection-offline i,footer i.off{background:#ef5555;box-shadow:0 0 8px #ef555580}
