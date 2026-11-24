@@ -1,7 +1,7 @@
 import {Component,lazy,Suspense,memo,useCallback,useEffect,useRef,useState,type FormEvent,type ReactNode} from 'react'
 import {createRoot} from 'react-dom/client'
 import type {Session} from '@supabase/supabase-js'
-import {Camera,AudioLines,ArrowUp,BrainCircuit,ChevronDown,CircleHelp,Clock3,Download,History as HistoryIcon,Mic,Paperclip,Plus,Settings2,Square,UserRound,Workflow,X} from 'lucide-react'
+import {BriefcaseBusiness,Receipt,Mail,Users,CalendarDays,FileText,Camera,AudioLines,ArrowUp,BrainCircuit,ChevronDown,Clock3,Download,History as HistoryIcon,Mic,Paperclip,Plus,Settings2,Square,UserRound,Workflow,X} from 'lucide-react'
 import type {CoreState} from './Core'
 import {AudioEngine} from './audio'
 import {consumeChat} from './chat-stream'
@@ -12,10 +12,11 @@ import './style.css'
 const Core=lazy(()=>import('./Core'))
 const labels:Record<CoreState,string>={STANDBY:'Tippe auf den Kern, um mit CORE zu sprechen',LISTENING:'Mikrofon aktiv',PROCESSING:'Verarbeitung',SPEAKING:'Sprachausgabe',OFFLINE:'Offline',ERROR:'Systemhinweis'}
 const titles={history:'Gesprächsverlauf',settings:'Einstellungen',memory:'Langzeitgedächtnis',integrations:'Integrationen',profile:'Benutzerprofil'}
+const businessModules=[{icon:Receipt,label:'Rechnungen & Angebote',description:'Rechnungsentwürfe und Angebote vorbereiten'},{icon:Users,label:'Kunden & Aufträge',description:'Kunden- und Auftragsverwaltung'},{icon:Mail,label:'E-Mail',description:'Geschäftliche Korrespondenz'},{icon:CalendarDays,label:'Kalender',description:'Termine und Erinnerungen'},{icon:FileText,label:'Dokumente',description:'Geschäftsdokumente verwalten'}]
 const suggestions=[
-  {icon:BrainCircuit,label:'Ideen entwickeln',prompt:'Hilf mir, Ideen für ein neues Projekt zu entwickeln.'},
-  {icon:Workflow,label:'Aufgaben planen',prompt:'Hilf mir, meine Aufgaben für heute zu planen.'},
-  {icon:CircleHelp,label:'Etwas erklären',prompt:'Erkläre mir ein komplexes Thema in einfachen Worten: '},
+  {icon:Receipt,label:'Rechnung vorbereiten',prompt:'Hilf mir, einen Rechnungsentwurf zu erstellen. Frage nach den fehlenden Angaben.'},
+  {icon:Mail,label:'E-Mail verfassen',prompt:'Hilf mir, eine geschäftliche E-Mail zu verfassen: '},
+  {icon:Workflow,label:'Aufgaben planen',prompt:'Hilf mir, meine betrieblichen Aufgaben zu planen: '},
 ]
 type RecognitionResult={isFinal:boolean;0:{transcript:string}}
 type Recognition= {
@@ -53,6 +54,7 @@ function App(){
   const [chats,setChats]=useState<Chat[]>([])
   const [messages,setMessages]=useState<Message[]>([])
   const [current,setCurrent]=useState<string>()
+  const [businessOpen,setBusinessOpen]=useState(false)
   const [panel,setPanel]=useState<Panel>(null)
   const [input,setInput]=useState('')
   const [notice,setNotice]=useState('')
@@ -404,13 +406,13 @@ function App(){
     }catch(error){report(error)}
   }
   function submit(event:FormEvent){event.preventDefault();if(!busy)void send()}
-  function switchPanel(next:Panel){setSaved(false);setPanel(value=>value===next?null:next)}
+  function switchPanel(next:Panel){setBusinessOpen(false);setSaved(false);setPanel(value=>value===next?null:next)}
   const last=messages.at(-1)
   const setup=config?(authMode&&!config.auth?'Supabase einrichten':!config.chat?'Groq einrichten':guest?'Gastmodus':null):null
   return <div className="app">
     <header className="topbar">
       <button className="brand" aria-label="CORE Startseite" onClick={()=>{if(!busy){reset();close()}}}><span><b>INTEL AI CORE</b></span></button>
-      <div className="top-actions"><Time/>{authMode&&<><span className="top-separator"/><button className="profile-btn" onClick={()=>switchPanel('profile')}><UserRound size={17}/><span>{session?(profile.name||'Profil'):'Anmelden'}</span></button></>}</div>
+      <div className="top-actions"><button className="profile-btn" onClick={()=>{close();setBusinessOpen(v=>!v)}} aria-expanded={businessOpen}><BriefcaseBusiness size={18}/><span>Business</span></button><Time/>{authMode&&<><span className="top-separator"/><button className="profile-btn" onClick={()=>switchPanel('profile')}><UserRound size={17}/><span>{session?(profile.name||'Profil'):'Anmelden'}</span></button></>}</div>
     </header>
     <nav className="rail" aria-label="Kommandonavigation">
       <div>
@@ -424,7 +426,7 @@ function App(){
     <main className="command">
       <div className="stage">
         <button type="button" aria-label={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} title={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
-        <div className="identity"><p>Intelligent AI Core · Dein persönlicher KI-Assistent</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey CORE':labels[state]}</div></div>
+        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey CORE':labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
@@ -435,7 +437,7 @@ function App(){
           <button type="button" className="icon-button attachment" aria-label="Dateiformat prüfen" title="Dateiformat prüfen" onClick={()=>{if(guest||session)fileRef.current?.click();else if(authMode)setPanel('profile')}}><Paperclip size={18}/></button>
           <input type="file" accept="image/*" capture="environment" hidden ref={cameraRef} onChange={e=>{void photo(e.target.files?.[0]);e.target.value=''}}/>
           <button type="button" className="icon-button camera" aria-label="Foto aufnehmen" title="Foto aufnehmen" disabled={busy} onClick={()=>{if(guest||session)cameraRef.current?.click();else if(authMode)setPanel('profile')}}><Camera size={18}/></button>
-          <textarea ref={inputRef} aria-label="Nachricht an CORE" placeholder="Nachricht an CORE …" rows={2} value={input} maxLength={8000} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();if(!busy)void send()}}}/>
+          <textarea ref={inputRef} aria-label="Nachricht an CORE" placeholder="Was soll CORE für dein Unternehmen erledigen?" rows={2} value={input} maxLength={8000} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();if(!busy)void send()}}}/>
           <button type="button" className={'icon-button mic '+(phase==='LISTENING'?'recording':'')} aria-label={phase==='LISTENING'?'Aufnahme beenden':'Mikrofon aktivieren'} disabled={phase==='PROCESSING'} onClick={()=>void microphone()}>{phase==='LISTENING'?<Square size={16}/>:<Mic size={19}/>}</button>
           {(phase==='SPEAKING'||phase==='PROCESSING')&&<button type="button" className="icon-button" aria-label="Unterbrechen" title="Unterbrechen" onClick={interrupt}><Square size={16}/></button>}
           <button type="submit" className="send" aria-label="Nachricht senden" disabled={busy||!input.trim()}><ArrowUp size={21}/></button>
@@ -446,6 +448,7 @@ function App(){
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>intelaicore.org</span><button className="install" onClick={()=>setInstallHelp(v=>!v)}><Download size={13}/> Installieren</button></footer>
     {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und beginne jede Frage mit „Hey CORE“. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{setVoicePrompt(false);void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
     {installHelp&&<div className="install-help" role="status"><strong>CORE installieren</strong><div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}><a href="https://github.com/tufan8877/SAVRANAI/releases/tag/desktop-v1" target="_blank" rel="noopener noreferrer" style={{color:"#efae5d"}}>Windows / macOS – Desktop-Downloads</a>{install&&<button className="action-btn" onClick={async()=>{await install.prompt();await install.userChoice;setInstall(undefined)}}>Webapp installieren</button>}<span>iPhone / iPad: Safari → Teilen → Zum Home-Bildschirm.</span><span>Android: Browsermenü → App installieren.</span><button className="action-btn" onClick={()=>setInstallHelp(false)}>Schließen</button></div></div>}
+    {businessOpen&&<SidePanel title="Business-Arbeitsbereich" close={()=>setBusinessOpen(false)}><div className="fields"><p className="muted">CORE für Unternehmen. Chat und Entwürfe sind verfügbar. Die folgenden Verwaltungsmodule befinden sich in Planung.</p>{businessModules.map(({icon:Icon,label,description})=><div key={label} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid rgba(239,174,93,.2)"}}><Icon size={20}/><div style={{flex:1}}><strong>{label}</strong><p className="muted">{description}</p></div><small>Geplant</small></div>)}</div></SidePanel>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
       {panel==='history'&&(guest||session&&!recovery?<History guest={guest} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
       {panel==='settings'&&<><Settings profile={profile} config={config} save={save}/><section style={{padding:16,display:'grid',gap:10}}><h3>Sprachdiagnose</h3><button className="action-btn" disabled={diagnosing||busy} onClick={()=>void diagnose('tone')}>1. Testton abspielen</button><button className="action-btn" disabled={diagnosing||busy} onClick={()=>void diagnose('fish')}>2. Fish Audio testen</button><button className="action-btn" disabled={diagnosing||busy} onClick={()=>void diagnose('assistant')}>3. Groq + Sprachausgabe testen</button><p role="status" style={{overflowWrap:'anywhere'}}>{diagnostic}</p><p>Für den Mikrofontest anschließend den Sprachmodus starten und eine Frage stellen.</p></section></>}
