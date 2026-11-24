@@ -210,3 +210,6 @@ footer i{background:#70a28a;box-shadow:0 0 8px #70a28a91}
 /* Refined activation hint */
 .stage .identity .status{display:inline-flex;align-items:center;justify-content:center;gap:8px;box-sizing:border-box;width:fit-content;max-width:100%;padding:7px 12px;font-family:inherit;font-size:clamp(11px,1.5vw,13px);font-weight:450;letter-spacing:.015em;line-height:1.45;text-wrap:balance}
 @media(max-width:700px){.stage .identity .status{font-size:12px;padding:7px 10px;gap:7px}}
+
+.composer .camera{flex-shrink:0;color:inherit}
+@media(max-width:700px){.composer{grid-template-columns:repeat(3,44px) minmax(0,1fr) 44px}}
