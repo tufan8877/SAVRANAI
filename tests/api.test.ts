@@ -9,8 +9,8 @@ test('API protects private routes and streams provider responses without exposin
   process.env.VITE_SUPABASE_URL='https://supabase.invalid'
   process.env.VITE_SUPABASE_ANON_KEY='public-fixture'
   process.env.GROQ_API_KEY='groq-fixture'
-  process.env.ELEVENLABS_API_KEY='speech-fixture'
-  process.env.ELEVENLABS_VOICE_ID='voice-fixture'
+  process.env.FISH_AUDIO_API_KEY='speech-fixture'
+  process.env.FISH_AUDIO_VOICE_ID='voice-fixture'
   const id='00000000-0000-4000-8000-000000000003'
   const user='00000000-0000-4000-8000-000000000001'
   const realFetch=globalThis.fetch
@@ -46,9 +46,13 @@ test('API protects private routes and streams provider responses without exposin
       assert.equal(body.messages.at(-2).content,'Earlier answer')
       return new Response('data: {"choices":[{"delta":{"content":"Guten "}}]}\n\ndata: {"choices":[{"delta":{"content":"Tag"}}]}\n\ndata: [DONE]\n\n')
     }
-    if(url.hostname==='api.elevenlabs.io'){
-      assert.equal(new Headers(init?.headers).get('xi-api-key'),'speech-fixture')
-      assert.equal(url.searchParams.get('output_format'),'pcm_24000')
+    if(url.hostname==='api.fish.audio'){
+      assert.equal(new Headers(init?.headers).get('Authorization'),'Bearer speech-fixture')
+      assert.equal(url.pathname,'/v1/tts')
+      const speech=JSON.parse(String(init?.body))
+      assert.equal(speech.format,'pcm')
+      assert.equal(speech.sample_rate,24000)
+      assert.equal(speech.reference_id,'voice-fixture')
       return new Response(new Uint8Array([0,0,1,0]))
     }
     return realFetch(resource,init)
