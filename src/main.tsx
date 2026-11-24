@@ -35,7 +35,10 @@ const Time=memo(function Time(){
   useEffect(()=>{const id=setInterval(()=>setNow(new Date()),1000);return ()=>clearInterval(id)},[])
   return <div className="clock"><Clock3 size={17}/><div><time>{now.toLocaleTimeString('de-DE')}</time><span>{now.toLocaleDateString('de-DE',{day:'2-digit',month:'long',year:'numeric'})}</span></div></div>
 })
-function Mark(){return <svg className="brand-mark" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" fill="none" stroke="#99602d" strokeDasharray="2 3"/><circle cx="32" cy="32" r="23" fill="none" stroke="#ffc773" strokeDasharray="12 3 2 3"/><circle cx="32" cy="32" r="18" fill="none" stroke="#e89635" strokeDasharray="3 2"/><ellipse cx="32" cy="32" rx="25" ry="12" transform="rotate(-35 32 32)" fill="none" stroke="#ffc773"/><ellipse cx="32" cy="32" rx="25" ry="12" transform="rotate(45 32 32)" fill="none" stroke="#e89635"/><ellipse cx="32" cy="32" rx="12" ry="23" fill="none" stroke="#e89635" opacity=".7"/><circle cx="32" cy="32" r="7" fill="#ffcf85" opacity=".25"/><circle cx="32" cy="32" r="3" fill="#fff1d6"/><path d="M15 32H49M32 15V49" stroke="#ffb44f" opacity=".4"/></svg>}
+function Mark(){
+  const level=useRef(0)
+  return <span className="brand-mark" aria-hidden="true" style={{position:'relative',overflow:'hidden',display:'grid',placeItems:'center'}}><span style={{position:'absolute',inset:0,display:'block'}}><CanvasBoundary><Suspense fallback={null}><Core state="STANDBY" level={level} reduced={true}/></Suspense></CanvasBoundary></span></span>
+}
 const Orb=memo(function Orb({mode,level,reduced}:{mode:CoreState;level:React.MutableRefObject<number>;reduced:boolean}){
   return <div className={'orb '+mode.toLowerCase()}>
     <div className="orb-grid"/><div className="orb-aura"/>
