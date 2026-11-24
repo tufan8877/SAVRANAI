@@ -35,10 +35,6 @@ const Time=memo(function Time(){
   useEffect(()=>{const id=setInterval(()=>setNow(new Date()),1000);return ()=>clearInterval(id)},[])
   return <div className="clock"><Clock3 size={17}/><div><time>{now.toLocaleTimeString('de-DE')}</time><span>{now.toLocaleDateString('de-DE',{day:'2-digit',month:'long',year:'numeric'})}</span></div></div>
 })
-function Mark(){
-  const level=useRef(0)
-  return <span className="brand-mark" aria-hidden="true" style={{position:'relative',overflow:'hidden',display:'block',padding:0}}><span style={{position:'absolute',left:'50%',top:'50%',width:240,height:240,transform:'translate(-50%,-50%) scale(.19)',transformOrigin:'center',display:'block',pointerEvents:'none'}}><Orb mode="STANDBY" level={level} reduced={true}/></span></span>
-}
 const Orb=memo(function Orb({mode,level,reduced}:{mode:CoreState;level:React.MutableRefObject<number>;reduced:boolean}){
   return <div className={'orb '+mode.toLowerCase()}>
     <div className="orb-grid"/><div className="orb-aura"/>
@@ -384,7 +380,7 @@ function App(){
   const setup=config?(authMode&&!config.auth?'Supabase einrichten':!config.chat?'Groq einrichten':guest?'Gastmodus':null):null
   return <div className="app">
     <header className="topbar">
-      <button className="brand" aria-label="CORE Startseite" onClick={()=>{if(!busy){reset();close()}}}><Mark/><span><b>INTEL AI CORE</b></span></button>
+      <button className="brand" aria-label="CORE Startseite" onClick={()=>{if(!busy){reset();close()}}}><span><b>INTEL AI CORE</b></span></button>
       <div className="top-actions"><Time/>{authMode&&<><span className="top-separator"/><button className="profile-btn" onClick={()=>switchPanel('profile')}><UserRound size={17}/><span>{session?(profile.name||'Profil'):'Anmelden'}</span></button></>}</div>
     </header>
     <nav className="rail" aria-label="Kommandonavigation">
