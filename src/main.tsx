@@ -37,7 +37,7 @@ const Time=memo(function Time(){
 })
 function Mark(){
   const level=useRef(0)
-  return <span className="brand-mark" aria-hidden="true" style={{position:'relative',overflow:'hidden',display:'grid',placeItems:'center'}}><span style={{position:'absolute',inset:0,display:'block'}}><CanvasBoundary><Suspense fallback={null}><Core state="STANDBY" level={level} reduced={true}/></Suspense></CanvasBoundary></span></span>
+  return <span className="brand-mark" aria-hidden="true" style={{position:'relative',overflow:'hidden',display:'block',padding:0}}><span style={{position:'absolute',left:'50%',top:'50%',width:240,height:240,transform:'translate(-50%,-50%) scale(.19)',transformOrigin:'center',display:'block',pointerEvents:'none'}}><Orb mode="STANDBY" level={level} reduced={true}/></span></span>
 }
 const Orb=memo(function Orb({mode,level,reduced}:{mode:CoreState;level:React.MutableRefObject<number>;reduced:boolean}){
   return <div className={'orb '+mode.toLowerCase()}>
