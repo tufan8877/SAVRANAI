@@ -323,16 +323,6 @@ function App(){
     retry(900)
     return ()=>{active=false;clearTimeout(timer);r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
-  async function activateCore(){
-    if(busy||!permitted('chat')||!permitted('speech'))return
-    try{
-      await engine.current.unlock()
-      recognition.current?.abort()
-      setVoicePrompt(false);setHandsFree(true)
-      await speak('Ja, ich höre zu.')
-      followupUntil.current=Date.now()+12000
-    }catch(error){report(error)}
-  }
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
     if(busy||!permitted('chat')||!permitted('speech'))return
@@ -406,7 +396,7 @@ function App(){
     <main className="command">
       <div className="stage">
         <div className="core-label"><span/> NEURALER KERN <span/></div>
-        <button type="button" aria-label="CORE aktivieren" title="CORE aktivieren" disabled={busy} onClick={()=>void activateCore()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
+        <button type="button" aria-label={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} title={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
         <div className="identity"><p>Intelligent AI Core · Dein persönlicher KI-Assistent</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey CORE':labels[state]}</div></div>
       </div>
       <div className="interaction">
