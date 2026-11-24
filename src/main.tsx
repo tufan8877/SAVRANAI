@@ -407,7 +407,7 @@ function App(){
       <div className="stage">
         <div className="core-label"><span/> NEURALER KERN <span/></div>
         <button type="button" aria-label="CORE aktivieren" title="CORE aktivieren" disabled={busy} onClick={()=>void activateCore()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
-        <div className="identity"><h1>INTEL AI CORE</h1><p>Intelligent AI Core · Dein persönlicher KI-Assistent</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey CORE':labels[state]}</div></div>
+        <div className="identity"><p>Intelligent AI Core · Dein persönlicher KI-Assistent</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey CORE':labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
