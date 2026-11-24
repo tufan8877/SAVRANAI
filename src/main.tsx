@@ -17,6 +17,13 @@ const suggestions=[
   {icon:Workflow,label:'Aufgaben planen',prompt:'Hilf mir, meine Aufgaben für heute zu planen.'},
   {icon:CircleHelp,label:'Etwas erklären',prompt:'Erkläre mir ein komplexes Thema in einfachen Worten: '},
 ]
+type RecognitionResult={isFinal:boolean;0:{transcript:string}}
+type Recognition= {
+  lang:string;continuous:boolean;interimResults:boolean;
+  onresult:((e:{resultIndex:number;results:ArrayLike<RecognitionResult>})=>void)|null;
+  onend:(()=>void)|null;onerror:((e:{error:string})=>void)|null;
+  start():void;abort():void
+}
 type InstallEvent=Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>}
 class CanvasBoundary extends Component<{children:ReactNode},{failed:boolean}> {
   state={failed:false}
@@ -56,6 +63,11 @@ function App(){
   const [install,setInstall]=useState<InstallEvent>()
   const [saved,setSaved]=useState(false)
   const [installHelp,setInstallHelp]=useState(false)
+  const [handsFree,setHandsFree]=useState(false)
+  const [awake,setAwake]=useState(false)
+  const recognition=useRef<Recognition|null>(null)
+  const deadline=useRef(0)
+  const latestVoice=useRef<(text:string)=>void>(()=>{})
   const engine=useRef(new AudioEngine())
   const level=useRef(0)
   const abort=useRef<AbortController>(null)
@@ -86,6 +98,7 @@ function App(){
     return ()=>subscription.unsubscribe()
   },[authMode])
   useEffect(()=>{
+    setHandsFree(false);setAwake(false);deadline.current=0
     sequence.current++
     abort.current?.abort()
     engine.current.dispose()
@@ -147,11 +160,17 @@ function App(){
     if(authMode&&(!session||recovery)){setPanel('profile');return false}
     return true
   }
+  function stopAssistant(){
+    recognition.current?.abort()
+    setHandsFree(false);setAwake(false);deadline.current=0
+  }
   function reset(){
+    stopAssistant()
     sequence.current++;abort.current?.abort();engine.current.stopSpeech();engine.current.finishRecording(false)
     setCurrent(undefined);setMessages([]);setInput('');setNotice('');setPhase('STANDBY')
   }
   async function openChat(id:string){
+    stopAssistant()
     if(!db||!uid)return
     const client=db
     const ticket=++sequence.current
@@ -180,12 +199,12 @@ function App(){
       if(ticket===sequence.current)setPhase('STANDBY')
     }catch(error){if(ticket===sequence.current)report(error)}
   }
-  async function send(text=input,existingTicket?:number){
+  async function send(text=input,existingTicket?:number,forceSpeech=false){
     const clean=text.trim()
     if(!clean||!permitted('chat'))return
     const ticket=existingTicket??++sequence.current
     engine.current.stopSpeech()
-    if(profile.speech&&config?.speech)void engine.current.unlock().catch(()=>undefined)
+    if((forceSpeech||profile.speech)&&config?.speech)void engine.current.unlock().catch(()=>undefined)
     const controller=new AbortController()
     abort.current?.abort();abort.current=controller
     setNotice('');setPhase('PROCESSING');setInput('')
@@ -208,7 +227,7 @@ function App(){
       if(ticket!==sequence.current)return
       setPhase('STANDBY')
       void refresh().catch(report)
-      if(profile.speech&&config?.speech)void speak(answer,ticket)
+      if((forceSpeech||profile.speech)&&config?.speech)await speak(answer,ticket)
     }catch(error){
       if(ticket!==sequence.current||controller.signal.aborted)return
       const savedId=(error as {conversationId?:string}).conversationId||id
@@ -218,7 +237,60 @@ function App(){
       report(error)
     }finally{if(abort.current===controller)abort.current=null}
   }
+  latestVoice.current=(text)=>{
+    const wake=/^(?:hey|hi|hallo|okay|ok)\s+(?:savran|savron|sawran|safran|sav ren|sav ran)\b[\s,!.?]*/i
+    const match=text.match(wake)
+    if(!match && Date.now()>deadline.current){setAwake(false);return}
+    const command=(match?text.slice(match[0].length):text).trim()
+    if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(command)){deadline.current=0;setAwake(false);return}
+    deadline.current=Date.now()+30000;setAwake(true)
+    recognition.current?.abort()
+    if(command)void send(command,undefined,true)
+    else void speak('Ja, wie kann ich dir helfen?')
+  }
+  useEffect(()=>{
+    if(!handsFree||phase!=='STANDBY'||!online)return
+    const browser=window as unknown as {SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition}
+    const Constructor=browser.SpeechRecognition||browser.webkitSpeechRecognition
+    if(!Constructor){setHandsFree(false);setNotice('Dieser Browser unterstützt keine automatische Spracherkennung.');return}
+    const r=new Constructor()
+    recognition.current=r
+    r.lang=profile.language==='en'?'en-US':'de-DE'
+    r.continuous=true;r.interimResults=false
+    let active=true, timer:ReturnType<typeof setTimeout>|undefined, failures=0
+    const start=()=>{if(active&&!document.hidden){try{r.start()}catch{setHandsFree(false);setNotice('Spracherkennung konnte nicht gestartet werden.')}}}
+    r.onresult=e=>{
+      failures=0
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal){latestVoice.current(e.results[i][0].transcript.trim());break}
+      }
+    }
+    r.onerror=e=>{
+      if(e.error==='aborted'||e.error==='no-speech')return
+      if(++failures>=3||['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){
+        setHandsFree(false);setAwake(false);setNotice('Spracherkennung nicht verfügbar: '+e.error)
+      }
+    }
+    r.onend=()=>{if(active&&!document.hidden)timer=setTimeout(start,400)}
+    const hide=()=>{if(document.hidden){setHandsFree(false);setAwake(false);deadline.current=0;r.abort()}}
+    document.addEventListener('visibilitychange',hide)
+    start()
+    return ()=>{active=false;clearTimeout(timer);r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',hide);if(recognition.current===r)recognition.current=null}
+  },[handsFree,phase,online,profile.language,uid])
+  useEffect(()=>{
+    if(!handsFree)return
+    const timer=setInterval(()=>{if(phase==='STANDBY'&&deadline.current<Date.now())setAwake(false);else if(phase==='SPEAKING'||phase==='PROCESSING')deadline.current=Date.now()+30000},1000)
+    return ()=>clearInterval(timer)
+  },[handsFree,phase])
+  async function toggleAssistant(){
+    if(handsFree){stopAssistant();interrupt();return}
+    if(busy||!permitted('chat')||!permitted('speech'))return
+    const browser=window as unknown as {SpeechRecognition?:unknown;webkitSpeechRecognition?:unknown}
+    if(!browser.SpeechRecognition&&!browser.webkitSpeechRecognition){setNotice('Automatische Spracherkennung wird in diesem Browser nicht unterstützt.');return}
+    try{await engine.current.unlock();setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
+  }
   async function microphone(){
+    if(handsFree)stopAssistant()
     if(phase==='LISTENING'){if(engine.current.cancelPendingRecording())setPhase('STANDBY');return}
     if(busy||!permitted('chat'))return
     const ticket=++sequence.current
@@ -235,13 +307,14 @@ function App(){
             if(ticket!==sequence.current)return
             if(!text)throw new Error('Whisper hat keine Sprache erkannt.')
             setInput(text);setPhase('STANDBY')
-            void send(text,ticket)
+            void send(text,ticket,true)
           }).catch(error=>{if(ticket===sequence.current&&!controller.signal.aborted)report(error)})
           .finally(()=>{if(abort.current===controller)abort.current=null})
       })
     }catch(error){if(ticket===sequence.current)report(error)}
   }
   function interrupt(){
+    stopAssistant()
     sequence.current++;abort.current?.abort();engine.current.stopSpeech();engine.current.finishRecording(false);setPhase('STANDBY')
   }
   async function save(next:Profile){
@@ -283,7 +356,7 @@ function App(){
       <div className="stage">
         <div className="core-label"><span/> NEURALER KERN <span/></div>
         <Orb mode={state} level={level} reduced={reduced}/>
-        <div className="identity"><h1>S.A.V.R.A.N.</h1><p>Smart Adaptive Virtual Reasoning and Assistance Network</p><div className={'status '+state.toLowerCase()} role="status"><i/>{labels[state]}</div></div>
+        <div className="identity"><h1>S.A.V.R.A.N.</h1><p>Smart Adaptive Virtual Reasoning and Assistance Network</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?(awake?'Ich höre zu':'Warte auf Hey SAVRAN'):labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
@@ -297,7 +370,7 @@ function App(){
           {(phase==='SPEAKING'||phase==='PROCESSING')&&<button type="button" className="icon-button" aria-label="Unterbrechen" title="Unterbrechen" onClick={interrupt}><Square size={16}/></button>}
           <button type="submit" className="send" aria-label="Nachricht senden" disabled={busy||!input.trim()}><ArrowUp size={21}/></button>
         </form>
-        <div className="composer-meta"><span><AudioLines size={13}/> SPRACHE & TEXT</span><span>{setup||'ENTER ZUM SENDEN'}</span></div>
+        <div className="composer-meta"><span><AudioLines size={13}/> SPRACHE & TEXT</span><button type="button" aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{color:handsFree?'#55e6ff':undefined,background:'transparent',border:'1px solid currentColor',borderRadius:6,padding:'4px 7px',cursor:'pointer'}}>{handsFree?'Hey SAVRAN: AN':'Hey SAVRAN aktivieren'}</button><span>{setup||'ENTER ZUM SENDEN'}</span></div>
       </div>
     </main>
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>SAVRAN.AI</span><button className="install" onClick={async()=>{if(install){await install.prompt();await install.userChoice;setInstall(undefined)}else setInstallHelp(v=>!v)}}><Download size={13}/> Installieren</button></footer>
