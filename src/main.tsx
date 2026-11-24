@@ -1,7 +1,7 @@
 import {Component,lazy,Suspense,memo,useCallback,useEffect,useRef,useState,type FormEvent,type ReactNode} from 'react'
 import {createRoot} from 'react-dom/client'
 import type {Session} from '@supabase/supabase-js'
-import {AudioLines,ArrowUp,BrainCircuit,ChevronDown,CircleHelp,Clock3,Download,History as HistoryIcon,Mic,Paperclip,Plus,Settings2,Square,UserRound,Workflow,X} from 'lucide-react'
+import {Camera,AudioLines,ArrowUp,BrainCircuit,ChevronDown,CircleHelp,Clock3,Download,History as HistoryIcon,Mic,Paperclip,Plus,Settings2,Square,UserRound,Workflow,X} from 'lucide-react'
 import type {CoreState} from './Core'
 import {AudioEngine} from './audio'
 import {consumeChat} from './chat-stream'
@@ -75,6 +75,7 @@ function App(){
   const sequence=useRef(0)
   const inputRef=useRef<HTMLTextAreaElement>(null)
   const fileRef=useRef<HTMLInputElement>(null)
+  const cameraRef=useRef<HTMLInputElement>(null)
   const close=useCallback(()=>setPanel(null),[])
   const report=useCallback((error:unknown)=>{setNotice(messageFor(error));setPhase('ERROR')},[])
   const guest=config?.guest===true
@@ -365,8 +366,36 @@ function App(){
     if(error){report(new Error(error.message));return}
     if(activeUid.current===uid){setProfile(next);setSaved(true)}
   }
+  async function photo(file?:File){
+    if(!file||busy||!permitted('chat'))return
+    const ticket=++sequence.current
+    const controller=new AbortController()
+    abort.current?.abort();abort.current=controller
+    engine.current.stopSpeech()
+    setPhase('PROCESSING');setNotice('')
+    const question=input.trim()||'Beschreibe und analysiere dieses Foto.'
+    const previous=messages
+    const user:Message={role:'user',content:'📷 '+question}
+    setMessages([...previous,user])
+    try{
+      const bitmap=await createImageBitmap(file)
+      const scale=Math.min(1,1280/Math.max(bitmap.width,bitmap.height))
+      const canvas=document.createElement('canvas')
+      canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale))
+      const ctx=canvas.getContext('2d')
+      if(!ctx){bitmap.close();throw new Error('Foto konnte nicht verarbeitet werden.')}
+      ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close()
+      const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Foto konnte nicht verarbeitet werden.')),'image/jpeg',.85))
+      const response=await api('photo?mime=image%2Fjpeg&question='+encodeURIComponent(question.slice(0,2000)),session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
+      const {answer}=await response.json()
+      if(ticket!==sequence.current)return
+      setMessages([...previous,user,{role:'assistant',content:answer}]);setInput('');setPhase('STANDBY')
+      if(profile.speech&&config?.speech)await speak(answer,ticket)
+    }catch(error){if(ticket===sequence.current&&!controller.signal.aborted){setMessages(previous);report(error)}}finally{if(abort.current===controller)abort.current=null}
+  }
   async function attach(file?:File){
     if(!file||(!guest&&!session))return
+    if(file.type.startsWith('image/')){await photo(file);return}
     if(file.size>8*1024*1024){report(new Error('Dateien dürfen höchstens 8 MB groß sein.'));return}
     const mime=file.type||({txt:'text/plain',pdf:'application/pdf',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'} as Record<string,string>)[file.name.split('.').pop()?.toLowerCase()||'']||''
     try{
@@ -404,6 +433,8 @@ function App(){
         <form className="composer" onSubmit={submit}>
           <input type="file" accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.webp" hidden ref={fileRef} onChange={e=>{void attach(e.target.files?.[0]);e.target.value=''}}/>
           <button type="button" className="icon-button attachment" aria-label="Dateiformat prüfen" title="Dateiformat prüfen" onClick={()=>{if(guest||session)fileRef.current?.click();else if(authMode)setPanel('profile')}}><Paperclip size={18}/></button>
+          <input type="file" accept="image/*" capture="environment" hidden ref={cameraRef} onChange={e=>{void photo(e.target.files?.[0]);e.target.value=''}}/>
+          <button type="button" className="icon-button camera" aria-label="Foto aufnehmen" title="Foto aufnehmen" disabled={busy} onClick={()=>{if(guest||session)cameraRef.current?.click();else if(authMode)setPanel('profile')}}><Camera size={18}/></button>
           <textarea ref={inputRef} aria-label="Nachricht an CORE" placeholder="Nachricht an CORE …" rows={2} value={input} maxLength={8000} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();if(!busy)void send()}}}/>
           <button type="button" className={'icon-button mic '+(phase==='LISTENING'?'recording':'')} aria-label={phase==='LISTENING'?'Aufnahme beenden':'Mikrofon aktivieren'} disabled={phase==='PROCESSING'} onClick={()=>void microphone()}>{phase==='LISTENING'?<Square size={16}/>:<Mic size={19}/>}</button>
           {(phase==='SPEAKING'||phase==='PROCESSING')&&<button type="button" className="icon-button" aria-label="Unterbrechen" title="Unterbrechen" onClick={interrupt}><Square size={16}/></button>}
