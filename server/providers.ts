@@ -26,23 +26,24 @@ export const provider: AIProvider = {
 }
 export const voiceIdPattern = /^[A-Za-z0-9_-]{1,80}$/
 function loadVoices(): {id:string;name:string}[] {
-  const id = process.env.ELEVENLABS_VOICE_ID
+  const id = (process.env.FISH_AUDIO_VOICE_ID || process.env.ELEVENLABS_VOICE_ID)?.trim()
   const voices = new Map<string,{id:string;name:string}>()
   if (id && voiceIdPattern.test(id)) voices.set(id,{id,name:'Standardstimme'})
   try {
-    const extra: unknown = JSON.parse(process.env.ELEVENLABS_VOICES_JSON || '[]')
+    const extra: unknown = JSON.parse(process.env.FISH_AUDIO_VOICES_JSON || process.env.ELEVENLABS_VOICES_JSON || '[]')
     if (Array.isArray(extra)) for (const item of extra) {
       if (item && typeof item.id === 'string' && voiceIdPattern.test(item.id) &&
           typeof item.name === 'string' && item.name.trim()) voices.set(item.id,{id:item.id,name:item.name.slice(0,80)})
     }
-  } catch { console.warn('ELEVENLABS_VOICES_JSON ist ungültig.') }
+  } catch { console.warn('FISH_AUDIO_VOICES_JSON ist ungültig.') }
   return [...voices.values()]
 }
 export const voices = loadVoices()
+export const fishKey = (process.env.FISH_AUDIO_API_KEY || process.env.FISH_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim()
 export function synthesize(text: string, voice: string, signal: AbortSignal) {
-  return fetch('https://api.elevenlabs.io/v1/text-to-speech/'+encodeURIComponent(voice)+'/stream?output_format=pcm_24000', {
+  return fetch('https://api.fish.audio/v1/tts', {
     method:'POST', signal,
-    headers:{'xi-api-key':process.env.ELEVENLABS_API_KEY!,'Content-Type':'application/json'},
-    body:JSON.stringify({text, model_id:process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5'}),
+    headers:{Authorization:'Bearer '+fishKey,'Content-Type':'application/json',model:process.env.FISH_AUDIO_MODEL || 's2.1-pro-free'},
+    body:JSON.stringify({text,reference_id:voice,format:'pcm',sample_rate:24000,latency:'balanced'}),
   })
 }
