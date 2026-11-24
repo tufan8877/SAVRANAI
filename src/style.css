@@ -189,3 +189,9 @@ footer i{background:#70a28a;box-shadow:0 0 8px #70a28a91}
 }
 @media(max-width:370px){.clock{display:none}.brand small{display:block}.rail div{gap:4px}.rail{gap:4px}.composer-meta span:first-child{font-size:10px}}
 @media(max-height:520px) and (min-width:701px){.orb{width:145px}.command{padding-top:12px}.identity h1{font-size:1.8rem}}
+
+/* Compact identity below the interactive core */
+.stage .identity{width:100%;display:flex;flex-direction:column;align-items:center;gap:8px;padding:0 12px;box-sizing:border-box}
+.stage .identity p{margin:0;max-width:100%;font-size:clamp(12px,1.5vw,14px);line-height:1.5;letter-spacing:.04em;text-wrap:balance}
+.stage .identity .status{margin:0;max-width:100%}
+@media(max-width:700px){.stage .identity{gap:6px;padding:0 8px}.stage .identity p{max-width:320px}}
