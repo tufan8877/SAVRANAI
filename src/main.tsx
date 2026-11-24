@@ -63,6 +63,8 @@ function App(){
   const [install,setInstall]=useState<InstallEvent>()
   const [saved,setSaved]=useState(false)
   const [installHelp,setInstallHelp]=useState(false)
+  const [diagnostic,setDiagnostic]=useState('')
+  const [diagnosing,setDiagnosing]=useState(false)
   const [handsFree,setHandsFree]=useState(false)
   const [voicePrompt,setVoicePrompt]=useState(true)
   const recognition=useRef<Recognition|null>(null)
@@ -186,6 +188,42 @@ function App(){
       }
       setMessages(all);setCurrent(id);setInput('');setPhase('STANDBY')
     }catch(error){if(ticket===sequence.current)report(error)}
+  }
+  async function diagnose(kind:'tone'|'fish'|'assistant'){
+    if(diagnosing)return
+    stopAssistant()
+    setDiagnosing(true);setDiagnostic('Test läuft …')
+    let stage='Audiofreigabe'
+    const controller=new AbortController()
+    const timeout=setTimeout(()=>controller.abort(),25000)
+    try{
+      await engine.current.unlock()
+      let answer='Hallo, hier ist SAVRAN. Dies ist ein Sprachtest.'
+      if(kind==='assistant'){
+        stage='Groq'
+        const response=await api('chat',session,{method:'POST',signal:controller.signal,body:JSON.stringify({text:'Antworte nur mit: Hallo, hier ist SAVRAN.',language:'de'})})
+        answer=''
+        await consumeChat(response,piece=>{answer+=piece})
+        if(!answer.trim())throw new Error('Keine Textantwort erhalten.')
+      }
+      stage=kind==='tone'?'Lokaler Testton':'Fish Audio'
+      let bytes:Uint8Array
+      if(kind==='tone'){
+        bytes=new Uint8Array(24000*2)
+        const view=new DataView(bytes.buffer)
+        for(let i=0;i<24000;i++)view.setInt16(i*2,Math.round(Math.sin(i*2*Math.PI*440/24000)*6000),true)
+      }else{
+        const response=await api('speech',session,{method:'POST',signal:controller.signal,body:JSON.stringify({text:answer,voice:profile.voice})})
+        bytes=new Uint8Array(await response.arrayBuffer())
+        if(bytes.length<2)throw new Error('Keine Audiodaten erhalten.')
+      }
+      stage='Audiowiedergabe'
+      const size=bytes.length
+      setDiagnostic((kind==='assistant'?'Groq OK. ':'')+(kind==='tone'?'Testton bereit. ':'Fish Audio HTTP OK: '+size+' Bytes. ')+'Wiedergabe läuft …')
+      await engine.current.speak(async()=>new Response(bytes.slice().buffer),0.8,()=>{})
+      setDiagnostic((kind==='assistant'?'Groq OK. ':'')+(kind==='tone'?'Testton':'Fish Audio: '+size+' Bytes')+' – Wiedergabe beendet. Hast du etwas gehört?')
+    }catch(error){setDiagnostic(stage+': '+(error instanceof Error?error.message:String(error)))}
+    finally{clearTimeout(timeout);setDiagnosing(false)}
   }
   async function speak(text:string,ticket=++sequence.current){
     if(!permitted('speech'))return
@@ -369,7 +407,7 @@ function App(){
     {installHelp&&<div className="install-help" role="status">iOS: In Safari „Teilen“ und „Zum Home-Bildschirm“ wählen. Auf Android oder Desktop die Installationsoption im Browsermenü öffnen.</div>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
       {panel==='history'&&(guest||session&&!recovery?<History guest={guest} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
-      {panel==='settings'&&<Settings profile={profile} config={config} save={save}/>}
+      {panel==='settings'&&<><Settings profile={profile} config={config} save={save}/><section style={{padding:16,display:'grid',gap:10}}><h3>Sprachdiagnose</h3><button className="action-btn" disabled={diagnosing||busy} onClick={()=>void diagnose('tone')}>1. Testton abspielen</button><button className="action-btn" disabled={diagnosing||busy} onClick={()=>void diagnose('fish')}>2. Fish Audio testen</button><button className="action-btn" disabled={diagnosing||busy} onClick={()=>void diagnose('assistant')}>3. Groq + Sprachausgabe testen</button><p role="status" style={{overflowWrap:'anywhere'}}>{diagnostic}</p><p>Für den Mikrofontest anschließend den Sprachmodus starten und eine Frage stellen.</p></section></>}
       {panel==='memory'&&(!session||recovery?<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>:<Memories userId={session.user.id} profile={profile} save={save} report={report}/>)}
       {panel==='integrations'&&<div className="fields"><p className="muted">Schnittstellen für zukünftige Versionen.</p><ul className="integrations">{config?.integrations.map(name=><li key={name}>{name}<small>Geplant</small></li>)}</ul></div>}
       {authMode&&panel==='profile'&&<Account session={session} profile={profile} save={save} report={report} recovery={recovery} config={config} onRecoveryDone={()=>setRecovery(false)}/>}
