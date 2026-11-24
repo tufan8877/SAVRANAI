@@ -64,9 +64,8 @@ function App(){
   const [saved,setSaved]=useState(false)
   const [installHelp,setInstallHelp]=useState(false)
   const [handsFree,setHandsFree]=useState(false)
-  const [awake,setAwake]=useState(false)
+  const [voicePrompt,setVoicePrompt]=useState(true)
   const recognition=useRef<Recognition|null>(null)
-  const deadline=useRef(0)
   const latestVoice=useRef<(text:string)=>void>(()=>{})
   const engine=useRef(new AudioEngine())
   const level=useRef(0)
@@ -98,7 +97,7 @@ function App(){
     return ()=>subscription.unsubscribe()
   },[authMode])
   useEffect(()=>{
-    setHandsFree(false);setAwake(false);deadline.current=0
+    setHandsFree(false);
     sequence.current++
     abort.current?.abort()
     engine.current.dispose()
@@ -162,7 +161,7 @@ function App(){
   }
   function stopAssistant(){
     recognition.current?.abort()
-    setHandsFree(false);setAwake(false);deadline.current=0
+    setHandsFree(false);
   }
   function reset(){
     stopAssistant()
@@ -238,15 +237,12 @@ function App(){
     }finally{if(abort.current===controller)abort.current=null}
   }
   latestVoice.current=(text)=>{
-    const wake=/^(?:hey|hi|hallo|okay|ok)\s+(?:savran|savron|sawran|safran|sav ren|sav ran)\b[\s,!.?]*/i
-    const match=text.match(wake)
-    if(!match && Date.now()>deadline.current){setAwake(false);return}
-    const command=(match?text.slice(match[0].length):text).trim()
-    if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(command)){deadline.current=0;setAwake(false);return}
-    deadline.current=Date.now()+30000;setAwake(true)
+    const command=text.trim()
+    if(!command)return
+    if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(command)){stopAssistant();return}
     recognition.current?.abort()
-    if(command)void send(command,undefined,true)
-    else void speak('Ja, wie kann ich dir helfen?')
+    if(/^(?:hey|hi|hallo|hey savran|hallo savran)[!.?]*$/i.test(command))void speak('Hallo, wie kann ich dir helfen?')
+    else void send(command,undefined,true)
   }
   useEffect(()=>{
     if(!handsFree||phase!=='STANDBY'||!online)return
@@ -268,26 +264,21 @@ function App(){
     r.onerror=e=>{
       if(e.error==='aborted'||e.error==='no-speech')return
       if(++failures>=3||['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){
-        setHandsFree(false);setAwake(false);setNotice('Spracherkennung nicht verfügbar: '+e.error)
+        setHandsFree(false);setNotice('Spracherkennung nicht verfügbar: '+e.error)
       }
     }
     r.onend=()=>{if(active&&!document.hidden)timer=setTimeout(start,400)}
-    const hide=()=>{if(document.hidden){setHandsFree(false);setAwake(false);deadline.current=0;r.abort()}}
+    const hide=()=>{if(document.hidden){setHandsFree(false);;r.abort()}}
     document.addEventListener('visibilitychange',hide)
     start()
     return ()=>{active=false;clearTimeout(timer);r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',hide);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
-  useEffect(()=>{
-    if(!handsFree)return
-    const timer=setInterval(()=>{if(phase==='STANDBY'&&deadline.current<Date.now())setAwake(false);else if(phase==='SPEAKING'||phase==='PROCESSING')deadline.current=Date.now()+30000},1000)
-    return ()=>clearInterval(timer)
-  },[handsFree,phase])
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
     if(busy||!permitted('chat')||!permitted('speech'))return
     const browser=window as unknown as {SpeechRecognition?:unknown;webkitSpeechRecognition?:unknown}
     if(!browser.SpeechRecognition&&!browser.webkitSpeechRecognition){setNotice('Automatische Spracherkennung wird in diesem Browser nicht unterstützt.');return}
-    try{await engine.current.unlock();setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
+    try{await engine.current.unlock();setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
   }
   async function microphone(){
     if(handsFree)stopAssistant()
@@ -356,7 +347,7 @@ function App(){
       <div className="stage">
         <div className="core-label"><span/> NEURALER KERN <span/></div>
         <Orb mode={state} level={level} reduced={reduced}/>
-        <div className="identity"><h1>S.A.V.R.A.N.</h1><p>Smart Adaptive Virtual Reasoning and Assistance Network</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?(awake?'Ich höre zu':'Warte auf Hey SAVRAN'):labels[state]}</div></div>
+        <div className="identity"><h1>S.A.V.R.A.N.</h1><p>Smart Adaptive Virtual Reasoning and Assistance Network</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?'Ich höre zu':labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
@@ -370,10 +361,11 @@ function App(){
           {(phase==='SPEAKING'||phase==='PROCESSING')&&<button type="button" className="icon-button" aria-label="Unterbrechen" title="Unterbrechen" onClick={interrupt}><Square size={16}/></button>}
           <button type="submit" className="send" aria-label="Nachricht senden" disabled={busy||!input.trim()}><ArrowUp size={21}/></button>
         </form>
-        <div className="composer-meta"><span><AudioLines size={13}/> SPRACHE & TEXT</span><button type="button" aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{color:handsFree?'#55e6ff':undefined,background:'transparent',border:'1px solid currentColor',borderRadius:6,padding:'4px 7px',cursor:'pointer'}}>{handsFree?'Hey SAVRAN: AN':'Hey SAVRAN aktivieren'}</button><span>{setup||'ENTER ZUM SENDEN'}</span></div>
+        <div className="composer-meta"><span><AudioLines size={13}/> SPRACHE & TEXT</span><button type="button" aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{color:handsFree?'#55e6ff':undefined,background:'transparent',border:'1px solid currentColor',borderRadius:6,padding:'4px 7px',cursor:'pointer'}}>{handsFree?'Sprachmodus: AN':'Sprachmodus starten'}</button><span>{setup||'ENTER ZUM SENDEN'}</span></div>
       </div>
     </main>
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>SAVRAN.AI</span><button className="install" onClick={async()=>{if(install){await install.prompt();await install.userChoice;setInstall(undefined)}else setInstallHelp(v=>!v)}}><Download size={13}/> Installieren</button></footer>
+    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>SAVRAN Sprachmodus</h2><p>Erlaube das Mikrofon, um direkt mit SAVRAN zu sprechen. Gesprochene Sätze werden zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{setVoicePrompt(false);void toggleAssistant()}}>Mikrofon zulassen</button><button className="icon-button" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
     {installHelp&&<div className="install-help" role="status">iOS: In Safari „Teilen“ und „Zum Home-Bildschirm“ wählen. Auf Android oder Desktop die Installationsoption im Browsermenü öffnen.</div>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
       {panel==='history'&&(guest||session&&!recovery?<History guest={guest} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
