@@ -85,7 +85,7 @@ export function Settings({profile,config,save}:{profile:Profile;config?:Config;s
     </select></label>
     <label>Lautstärke · {Math.round(draft.volume*100)} %<input type="range" min={0} max={1} step={.01} value={draft.volume} onChange={e=>setDraft({...draft,volume:Number(e.target.value)})}/></label>
     <label className="check"><input type="checkbox" checked={draft.speech} onChange={e=>setDraft({...draft,speech:e.target.checked})}/> Antworten automatisch vorlesen</label>
-    {!config?.speech&&<p className="muted">Sprachausgabe erfordert eine ElevenLabs-Konfiguration.</p>}
+    {!config?.speech&&<p className="muted">Sprachausgabe erfordert eine Fish Audio-Konfiguration.</p>}
     <p className="muted">Sprachmodell · {config?.model||'–'}</p>
     <button className="action-btn">Speichern</button>
   </form>
