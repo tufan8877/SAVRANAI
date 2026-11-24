@@ -1,0 +1,49 @@
+name: CORE desktop installers
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            args: --win --x64
+          - os: macos-latest
+            args: --mac --arm64 --x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+        working-directory: desktop
+      - run: npx electron-builder ${{ matrix.args }} --publish never
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view desktop-v1 --repo "$GITHUB_REPOSITORY" || gh release create desktop-v1 --repo "$GITHUB_REPOSITORY" --title "CORE Desktop" --notes "Unsigned desktop installers."
+          gh release upload desktop-v1 installers/* --clobber --repo "$GITHUB_REPOSITORY"
