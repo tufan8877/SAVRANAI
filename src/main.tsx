@@ -10,7 +10,7 @@ import {Account,History,Memories,Settings,SidePanel,type Panel} from './Workspac
 import './style.css'
 
 const Core=lazy(()=>import('./Core'))
-const labels:Record<CoreState,string>={STANDBY:'Bereit',LISTENING:'Mikrofon aktiv',PROCESSING:'Verarbeitung',SPEAKING:'Sprachausgabe',OFFLINE:'Offline',ERROR:'Systemhinweis'}
+const labels:Record<CoreState,string>={STANDBY:'Tippe auf den Kern, um mit CORE zu sprechen',LISTENING:'Mikrofon aktiv',PROCESSING:'Verarbeitung',SPEAKING:'Sprachausgabe',OFFLINE:'Offline',ERROR:'Systemhinweis'}
 const titles={history:'Gesprächsverlauf',settings:'Einstellungen',memory:'Langzeitgedächtnis',integrations:'Integrationen',profile:'Benutzerprofil'}
 const suggestions=[
   {icon:BrainCircuit,label:'Ideen entwickeln',prompt:'Hilf mir, Ideen für ein neues Projekt zu entwickeln.'},
@@ -397,7 +397,7 @@ function App(){
       <div className="stage">
         <div className="core-label"><span/> NEURALER KERN <span/></div>
         <button type="button" aria-label={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} title={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
-        <div className="identity"><p>Intelligent AI Core · Dein persönlicher KI-Assistent</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey CORE':labels[state]}</div></div>
+        <div className="identity"><p>Intelligent AI Core · Dein persönlicher KI-Assistent</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey CORE':labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
