@@ -283,7 +283,7 @@ function App(){
     else void send(command,undefined,true)
   }
   useEffect(()=>{
-    if(!handsFree||phase!=='STANDBY'||!online)return
+    if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
     const browser=window as unknown as {SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition}
     const Constructor=browser.SpeechRecognition||browser.webkitSpeechRecognition
     if(!Constructor){setHandsFree(false);setNotice('Dieser Browser unterstützt keine automatische Spracherkennung.');return}
@@ -291,25 +291,31 @@ function App(){
     recognition.current=r
     r.lang=profile.language==='en'?'en-US':'de-DE'
     r.continuous=true;r.interimResults=false
-    let active=true, timer:ReturnType<typeof setTimeout>|undefined, failures=0
-    const start=()=>{if(active&&!document.hidden){try{r.start()}catch{setHandsFree(false);setNotice('Spracherkennung konnte nicht gestartet werden.')}}}
+    let active=true, timer:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
+    const retry=(delay=700)=>{clearTimeout(timer);if(active&&!document.hidden&&!handled)timer=setTimeout(start,delay)}
+    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start()}catch{retry(1200)}}}
     r.onresult=e=>{
       failures=0
       for(let i=e.resultIndex;i<e.results.length;i++){
-        if(e.results[i].isFinal){latestVoice.current(e.results[i][0].transcript.trim());break}
+        if(e.results[i].isFinal&&!handled&&e.results[i][0].transcript.trim()){
+          handled=true;clearTimeout(timer);latestVoice.current(e.results[i][0].transcript.trim());break
+        }
       }
     }
     r.onerror=e=>{
-      if(e.error==='aborted'||e.error==='no-speech')return
-      if(++failures>=3||['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){
-        setHandsFree(false);setNotice('Spracherkennung nicht verfügbar: '+e.error)
+      if(!active||handled)return
+      if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){
+        setNotice('Mikrofonzugriff nicht verfügbar: '+e.error)
+        retry(3000);return
       }
+      failures++
+      retry(Math.min(3000,500*failures))
     }
-    r.onend=()=>{if(active&&!document.hidden)timer=setTimeout(start,400)}
-    const hide=()=>{if(document.hidden){setHandsFree(false);;r.abort()}}
-    document.addEventListener('visibilitychange',hide)
-    start()
-    return ()=>{active=false;clearTimeout(timer);r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',hide);if(recognition.current===r)recognition.current=null}
+    r.onend=()=>retry()
+    const visibility=()=>{if(document.hidden){clearTimeout(timer);r.abort()}else retry()}
+    document.addEventListener('visibilitychange',visibility)
+    retry(900)
+    return ()=>{active=false;clearTimeout(timer);r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
