@@ -8,6 +8,7 @@ export class AudioEngine {
   private stream?:MediaStream
   private input?:MediaStreamAudioSourceNode
   private timer?:ReturnType<typeof setTimeout>
+  private silenceCheck?:ReturnType<typeof setInterval>
   private opening=0
   private sources=new Set<AudioBufferSourceNode>()
   private sample?:Float32Array<ArrayBuffer>
@@ -62,6 +63,17 @@ export class AudioEngine {
       }
       recorder.onerror=()=>this.finishRecording(true)
       recorder.start(250)
+      const began=performance.now()
+      let lastVoice:number|undefined
+      this.silenceCheck=setInterval(()=>{
+        const now=performance.now()
+        if(this.level()>=.015)lastVoice=now
+        if(lastVoice!==undefined && now-lastVoice>=1100)this.finishRecording()
+        else if(lastVoice===undefined && now-began>=12_000){
+          this.finishRecording(false)
+          onFinish(new Blob())
+        }
+      },50)
       this.timer=setTimeout(()=>this.finishRecording(true),60_000)
     } catch(error) { this.finishRecording(false);throw error }
   }
@@ -73,6 +85,7 @@ export class AudioEngine {
   finishRecording(deliver=true) {
     if(!deliver||!this.recording)this.opening++
     clearTimeout(this.timer)
+    clearInterval(this.silenceCheck)
     if(this.recording?.state==='recording')this.recording.stop()
     this.recording=undefined
     this.stream?.getTracks().forEach(track=>track.stop())
@@ -86,6 +99,27 @@ export class AudioEngine {
     this.playback=undefined
     for(const source of this.sources){source.stop();source.disconnect()}
     this.sources.clear()
+  }
+  async speakInBrowser(text:string,language:string,volume:number,onStart:()=>void) {
+    if(!globalThis.speechSynthesis||!globalThis.SpeechSynthesisUtterance){
+      throw new Error('Dieser Browser bietet keine Sprachausgabe an.')
+    }
+    this.stopSpeech()
+    const controller=new AbortController()
+    this.playback=controller
+    const synthesis=globalThis.speechSynthesis
+    const utterance=new SpeechSynthesisUtterance(text)
+    utterance.lang=language
+    utterance.volume=volume
+    try {
+      await new Promise<void>((resolve,reject)=>{
+        controller.signal.addEventListener('abort',()=>{resolve();synthesis.cancel()},{once:true})
+        utterance.onstart=()=>{if(!controller.signal.aborted)onStart()}
+        utterance.onend=()=>resolve()
+        utterance.onerror=()=>reject(new Error('Die Browserstimme konnte die Antwort nicht vorlesen.'))
+        synthesis.speak(utterance)
+      })
+    } finally {if(this.playback===controller)this.playback=undefined}
   }
   async speak(load:(signal:AbortSignal)=>Promise<Response>,volume:number,onStart:()=>void) {
     this.stopSpeech()

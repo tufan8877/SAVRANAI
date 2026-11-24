@@ -37,8 +37,8 @@ Setze für den Kontomodus `AUTH_ENABLED=true` und konfiguriere die folgenden Sup
 
 ## Bedienung
 
-- Text schreiben oder das Mikrofon ausdrücklich aktivieren. Die Aufnahme endet über den Stopp-Button, bei Hintergrundwechsel oder spätestens nach 60 Sekunden. Eine erkannte Äußerung wird direkt als Nachricht gesendet.
-- Einstellungen steuern Antwortsprache, Stimme, Lautstärke und automatisches Vorlesen. Das Vorlesen startet nach Abschluss der Textantwort und verwendet einen gestreamten PCM-Audiokanal. Der Unterbrechen-Button bricht den Stream und eingeplante Audiopuffer ab.
+- Text schreiben oder das Mikrofon ausdrücklich aktivieren. Nach einer kurzen Sprechpause sendet Savran die Aufnahme automatisch. Sag „Hey Savran“, um eine gesprochene Begrüßung zu hören. Savran hört danach automatisch für deine Frage zu. Du kannst deine Frage auch direkt nach „Hey Savran“ stellen. Der Stopp-Button beendet die Aufnahme manuell. Beim Hintergrundwechsel wird die Aufnahme abgebrochen.
+- Savran liest Antworten auf gesprochene Fragen automatisch vor. In den Einstellungen lässt sich das Vorlesen auch für getippte Nachrichten aktivieren. Savran verwendet ElevenLabs, wenn der Dienst verfügbar ist, und sonst die Browserstimme. Der Unterbrechen-Button stoppt die Sprachausgabe.
 - Gespräche werden mit der ersten Nachricht angelegt. Im seitlichen Verlauf lassen sich Gespräche nach Titel und Nachrichtentext suchen, öffnen, umbenennen und löschen. Nachrichten lassen sich kopieren oder erneut vorlesen.
 - Der aktuelle Gesprächskontext verwendet einen begrenzten Ausschnitt des Verlaufs. Das Langzeitgedächtnis ist separat und standardmäßig deaktiviert. Die Zustimmung zu jeder gespeicherten Notiz erfolgt im Gedächtnisbereich. Durch Deaktivieren werden Notizen aus Anfragen entfernt. Im Gedächtnisbereich können sie einzeln oder komplett gelöscht werden.
 - Die Dateifunktion prüft PDF, UTF-8-TXT, DOCX, PNG, JPEG und WEBP serverseitig auf Format und Größe. Das Limit liegt bei 8 MB für Dateien und 10 MB für Mikrofonaufnahmen. Datei- und Bildanalyse ist deaktiviert. Dateien für die Formatprüfung werden weder gespeichert noch an Groq gesendet.
