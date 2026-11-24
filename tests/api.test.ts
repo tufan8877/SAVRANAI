@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises'
 import {consumeChat} from '../src/chat-stream'
 
 test('API protects private routes and streams provider responses without exposing secrets',async()=>{
+  process.env.AUTH_ENABLED='true'
   process.env.VITE_SUPABASE_URL='https://supabase.invalid'
   process.env.VITE_SUPABASE_ANON_KEY='public-fixture'
   process.env.GROQ_API_KEY='groq-fixture'

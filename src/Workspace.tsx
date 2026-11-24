@@ -15,15 +15,15 @@ export function SidePanel({title,close,children}:{title:string;close:()=>void;ch
     {children}
   </aside>
 }
-export function History({chats,id,messages,newChat,open,refresh,report,speak,busy}:{
+export function History({chats,id,messages,newChat,open,refresh,report,speak,busy,guest}:{
   chats:Chat[];id?:string;messages:Message[];newChat:()=>void;open:(id:string)=>void;
-  refresh:()=>Promise<void>;report:(error:unknown)=>void;speak:(text:string)=>void;busy:boolean
+  refresh:()=>Promise<void>;report:(error:unknown)=>void;speak:(text:string)=>void;busy:boolean;guest:boolean
 }) {
   const [search,setSearch]=useState('')
   const [results,setResults]=useState<Chat[]>()
   useEffect(()=>{
     const client=db
-    if(!client||!search.trim())return
+    if(guest||!client||!search.trim())return
     const request=new AbortController()
     const timer=setTimeout(()=>{
       void client.rpc('search_conversations',{search_query:search.trim()}).abortSignal(request.signal).then(({data,error})=>{
@@ -33,7 +33,7 @@ export function History({chats,id,messages,newChat,open,refresh,report,speak,bus
       })
     },250)
     return ()=>{clearTimeout(timer);request.abort()}
-  },[search,chats,report])
+  },[search,chats,report,guest])
   const [editing,setEditing]=useState<string>()
   const [title,setTitle]=useState('')
   const [copied,setCopied]=useState<number>()
@@ -51,6 +51,7 @@ export function History({chats,id,messages,newChat,open,refresh,report,speak,bus
   }
   return <>
     <button className="action-btn" onClick={newChat} disabled={busy}><Plus size={16}/> Neues Gespräch</button>
+    {guest?<p className="muted">Das Gespräch ist nur in diesem Tab verfügbar.</p>:<>
     <label className="search-field"><Search size={16}/><input placeholder="Gespräche suchen" aria-label="Gespräche suchen" value={search} maxLength={150} onChange={e=>{setSearch(e.target.value);setResults(undefined)}}/></label>
     <div className="chat-list">
       {(search.trim()?(results||[]):chats).map(chat=>
@@ -63,6 +64,7 @@ export function History({chats,id,messages,newChat,open,refresh,report,speak,bus
       {!search.trim()&&!chats.length&&<p className="muted">Noch keine gespeicherten Gespräche.</p>}
       {search.trim()&&results?.length===0&&<p className="muted">Keine passenden Gespräche.</p>}
     </div>
+    </>}
     {!!messages.length&&<section className="transcript" aria-label="Nachrichten im aktuellen Gespräch">{messages.map((m,i)=><article key={m.id||i}>
       <header>{m.role==='assistant'?'SAVRAN':'Du'}<span>
       {m.role==='assistant'&&<button className="icon-button" aria-label="Vorlesen" disabled={busy} onClick={()=>speak(m.content)}><AudioLines size={14}/></button>}

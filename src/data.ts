@@ -7,15 +7,15 @@ export type Message = {id?:string;role:'user'|'assistant';content:string}
 export type Memory = {id:string;content:string}
 export const defaults = {name:'',language:'auto',voice:'',volume:.8,speech:false,memory_enabled:false}
 export type Profile = typeof defaults
-export type Config = {auth:boolean;chat:boolean;speech:boolean;accountDeletion:boolean;model:string;voices:{id:string;name:string}[];integrations:string[]}
+export type Config = {guest:boolean;auth:boolean;chat:boolean;speech:boolean;accountDeletion:boolean;model:string;voices:{id:string;name:string}[];integrations:string[]}
 export function messageFor(error:unknown) {
   if(error instanceof DOMException && error.name==='NotAllowedError') return 'Der Zugriff auf das Mikrofon oder die Audiowiedergabe wurde verweigert.'
   if(error instanceof DOMException && error.name==='NotFoundError') return 'Kein Mikrofon gefunden.'
   if(error instanceof Error && !(error instanceof TypeError)) return error.message
   return 'Die Anfrage konnte nicht abgeschlossen werden. Prüfe die Verbindung und versuche es erneut.'
 }
-export async function api(path:string, session:Session, options:RequestInit={}) {
-  const response=await fetch('/api/'+path,{...options,headers:{Authorization:'Bearer '+session.access_token,
+export async function api(path:string, session:Session|null, options:RequestInit={}) {
+  const response=await fetch('/api/'+path,{...options,headers:{...(session?{Authorization:'Bearer '+session.access_token}:{}),
     'Content-Type':'application/json',...options.headers}})
   if(!response.ok) {
     const body=await response.json().catch(()=>null)

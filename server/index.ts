@@ -2,7 +2,7 @@ import 'dotenv/config'
 import express, {type Request, type Response} from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
-import {rateLimit} from 'express-rate-limit'
+import {ipKeyGenerator,rateLimit} from 'express-rate-limit'
 import {createClient, type SupabaseClient} from '@supabase/supabase-js'
 import {Readable} from 'node:stream'
 import {pipeline} from 'node:stream/promises'
@@ -19,10 +19,11 @@ if (production) app.set('trust proxy',1)
 app.disable('x-powered-by')
 const url = process.env.VITE_SUPABASE_URL
 const key = process.env.VITE_SUPABASE_ANON_KEY
+const guest = process.env.AUTH_ENABLED !== 'true'
 const authConfigured = Boolean(url && key)
 const supabaseOrigin = url ? new URL(url).origin : ''
 const appOrigin = new URL(process.env.APP_URL || 'https://savran.ai').origin
-const origins = new Set([appOrigin, ...(!production ? ['http://localhost:5173','http://127.0.0.1:5173'] : [])])
+const origins = new Set([appOrigin, ...(process.env.RENDER_EXTERNAL_URL ? [new URL(process.env.RENDER_EXTERNAL_URL).origin] : []), ...(!production ? ['http://localhost:5173','http://127.0.0.1:5173'] : [])])
 const chatReady = Boolean(process.env.GROQ_API_KEY)
 const speechReady = Boolean(process.env.ELEVENLABS_API_KEY && voices.length)
 const accountDeletion = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -49,8 +50,9 @@ app.use('/api',(req,res,next) => {
 app.use('/api',cors({origin:(origin,done)=>done(null,Boolean(origin && origins.has(origin))),methods:['GET','POST','DELETE'],allowedHeaders:['Authorization','Content-Type']}))
 app.use('/api',rateLimit({windowMs:60_000,limit:100,standardHeaders:'draft-8',legacyHeaders:false,handler:(_req,res)=>error(res,429,'rate_limit','Zu viele Anfragen. Bitte warte einen Moment.')}))
 app.get('/api/health',(_req,res)=>res.json({ok:true}))
-app.get('/api/config',(_req,res)=>res.json({auth:authConfigured,chat:chatReady,speech:speechReady,accountDeletion,model:groqModel,voices:speechReady?voices:[],integrations:integrationCatalog}))
+app.get('/api/config',(_req,res)=>res.json({guest,auth:!guest && authConfigured,chat:chatReady,speech:speechReady,accountDeletion:!guest && accountDeletion,model:groqModel,voices:speechReady?voices:[],integrations:integrationCatalog}))
 app.use('/api',async (req,res,next) => {
+  if (guest) return next()
   if (!url || !key) return error(res,503,'supabase_config','Supabase ist noch nicht konfiguriert.')
   const token = req.headers.authorization?.match(/^Bearer ([^ ]+)$/i)?.[1]
   if (!token) return error(res,401,'login','Bitte melde dich an.')
@@ -61,7 +63,7 @@ app.use('/api',async (req,res,next) => {
   res.locals.userId = data.user.id
   next()
 })
-app.use('/api',rateLimit({windowMs:60_000,limit:30,keyGenerator:(_req,res)=>res.locals.userId,standardHeaders:'draft-8',legacyHeaders:false,handler:(_req,res)=>error(res,429,'rate_limit','Zu viele Anfragen. Bitte warte einen Moment.')}))
+app.use('/api',rateLimit({windowMs:60_000,limit:guest ? 10 : 30,keyGenerator:(req,res)=>guest ? ipKeyGenerator(req.ip || 'unknown') : res.locals.userId,standardHeaders:'draft-8',legacyHeaders:false,handler:(_req,res)=>error(res,429,'rate_limit','Zu viele Anfragen. Bitte warte einen Moment.')}))
 app.use('/api',express.json({limit:'80kb'}))
 function signalFor(res: Response, timeout = 90_000) {
   const controller = new AbortController()
@@ -73,16 +75,31 @@ function upstreamError(res: Response, status: number, name: string) {
   return error(res,502,'provider_error',name+' konnte die Anfrage nicht verarbeiten.')
 }
 const activeChats = new Set<string>()
-const chatInput = z.object({conversationId:z.uuid().optional(),text:z.string().trim().min(1).max(8000)})
+const chatInput = z.object({
+  conversationId:z.uuid().optional(),
+  text:z.string().trim().min(1).max(8000),
+  history:z.array(z.object({role:z.enum(['user','assistant']),content:z.string().min(1).max(2000)})).max(4).optional(),
+  language:z.enum(['auto','de','en']).optional(),
+})
+function systemMessage(language?:string): Message {
+  const preference = language === 'de' ? ' Bevorzugte Antwortsprache: Deutsch.' : language === 'en' ? ' Preferred reply language: English.' : ''
+  return {role:'system',content:systemPrompt + preference}
+}
 app.post('/api/chat',async (req,res) => {
   if (!chatReady) return error(res,503,'groq_config','Der Groq API-Key muss auf dem Server konfiguriert werden.')
   const input = chatInput.safeParse(req.body)
   if (!input.success) return error(res,400,'input','Die Nachricht ist leer oder zu lang.')
-  const userId: string = res.locals.userId
-  if (activeChats.has(userId)) return error(res,409,'chat_active','Eine Antwort für dein Konto wird bereits verarbeitet.')
-  activeChats.add(userId)
-  try { await streamChat(input.data,res) }
-  finally { activeChats.delete(userId) }
+  const requester = guest ? ipKeyGenerator(req.ip || 'unknown') : res.locals.userId as string
+  if (activeChats.has(requester)) return error(res,409,'chat_active','Eine Antwort wird bereits verarbeitet.')
+  activeChats.add(requester)
+  try {
+    if (guest) {
+      const {history,language,text} = input.data
+      await streamAnswer([systemMessage(language),...(history || []),{role:'user',content:text}],res)
+    } else {
+      await streamChat(input.data,res)
+    }
+  } finally { activeChats.delete(requester) }
 })
 async function streamChat(input: z.infer<typeof chatInput>, res: Response) {
   const db: SupabaseClient = res.locals.db
@@ -102,7 +119,7 @@ async function streamChat(input: z.infer<typeof chatInput>, res: Response) {
     db.from('profiles').select('language,memory_enabled').maybeSingle(),
   ])
   if (history.error || profile.error) throw history.error || profile.error
-  const messages: Message[] = [{role:'system',content:systemPrompt + (profile.data?.language === 'de' ? ' Bevorzugte Antwortsprache: Deutsch.' : profile.data?.language === 'en' ? ' Preferred reply language: English.' : '')}]
+  const messages: Message[] = [systemMessage(profile.data?.language)]
   if (profile.data?.memory_enabled) {
     const entries = await db.from('memories').select('content').order('created_at',{ascending:false}).limit(16)
     if (entries.error) throw entries.error
@@ -121,6 +138,12 @@ async function streamChat(input: z.infer<typeof chatInput>, res: Response) {
   const touched = await db.from('conversations').update({updated_at:new Date().toISOString()}).eq('id',id)
   if (touched.error) throw touched.error
   res.set('X-Conversation-Id',id)
+  await streamAnswer(messages,res,async answer=>{
+    const saved = await db.from('messages').insert({conversation_id:id,role:'assistant',content:answer})
+    if (saved.error) throw saved.error
+  })
+}
+async function streamAnswer(messages:Message[],res:Response,save?: (answer:string)=>Promise<void>) {
   if (res.destroyed) return
   const response = await provider.chat(messages,signalFor(res))
   if (!response.ok || !response.body) {
@@ -149,8 +172,7 @@ async function streamChat(input: z.infer<typeof chatInput>, res: Response) {
       if (done) break
     }
     if (!done || !answer.trim()) throw new Error('Incomplete provider stream')
-    const saved = await db.from('messages').insert({conversation_id:id,role:'assistant',content:answer})
-    if (saved.error) throw saved.error
+    await save?.(answer)
     res.end(JSON.stringify({done:true})+'\n')
   } catch {
     if (!res.destroyed) res.end(JSON.stringify({error:'Die Antwort wurde unterbrochen oder konnte nicht gespeichert werden.'})+'\n')
@@ -183,6 +205,7 @@ app.post('/api/files/validate',express.raw({type:'application/octet-stream',limi
   res.json({format,analysisAvailable:false})
 })
 app.delete('/api/account',async (req,res) => {
+  if (guest) return error(res,404,'route','Die Kontoverwaltung ist derzeit deaktiviert.')
   if (!url || !process.env.SUPABASE_SERVICE_ROLE_KEY) return error(res,503,'admin_config','Die Kontolöschung ist serverseitig noch nicht konfiguriert.')
   if (req.body?.confirmation !== 'DELETE') return error(res,400,'confirm','Bestätige die Kontolöschung ausdrücklich.')
   const admin = createClient(url,process.env.SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false}})

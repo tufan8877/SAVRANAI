@@ -64,7 +64,9 @@ function App(){
   const fileRef=useRef<HTMLInputElement>(null)
   const close=useCallback(()=>setPanel(null),[])
   const report=useCallback((error:unknown)=>{setNotice(messageFor(error));setPhase('ERROR')},[])
-  const uid=session?.user.id
+  const guest=config?.guest===true
+  const authMode=config?.guest===false
+  const uid=authMode?session?.user.id:undefined
   const activeUid=useRef(uid)
   activeUid.current=uid
   const busy=phase==='LISTENING'||phase==='PROCESSING'
@@ -76,13 +78,13 @@ function App(){
     if(activeUid.current===uid)setChats(data)
   },[uid])
   useEffect(()=>{
-    if(!db)return
+    if(!db||!authMode)return
     const {data:{subscription}}=db.auth.onAuthStateChange((event,next)=>{
       setSession(next?.user.email_confirmed_at?next:null)
       if(event==='PASSWORD_RECOVERY'){setRecovery(true);setPanel('profile')}
     })
     return ()=>subscription.unsubscribe()
-  },[])
+  },[authMode])
   useEffect(()=>{
     sequence.current++
     abort.current?.abort()
@@ -137,12 +139,12 @@ function App(){
   function permitted(feature:'chat'|'speech'){
     if(!online){setNotice('Du bist offline. Stelle eine Internetverbindung her.');return false}
     if(!config){report(new Error('Die Serverkonfiguration ist momentan nicht erreichbar.'));return false}
-    if(!config.auth||!db){report(new Error('Supabase ist noch nicht konfiguriert.'));return false}
+    if(authMode&&(!config.auth||!db)){report(new Error('Supabase ist noch nicht konfiguriert.'));return false}
     if(!config[feature]){
       report(new Error(feature==='chat'?'Groq ist noch nicht konfiguriert. Hinterlege den API-Key auf dem Server.':'ElevenLabs ist noch nicht konfiguriert. Hinterlege den API-Key und eine Voice-ID.'))
       return false
     }
-    if(!session||recovery){setPanel('profile');return false}
+    if(authMode&&(!session||recovery)){setPanel('profile');return false}
     return true
   }
   function reset(){
@@ -168,7 +170,7 @@ function App(){
     }catch(error){if(ticket===sequence.current)report(error)}
   }
   async function speak(text:string,ticket=++sequence.current){
-    if(!permitted('speech')||!session)return
+    if(!permitted('speech'))return
     engine.current.stopSpeech()
     setNotice('');setPhase('PROCESSING')
     try {
@@ -180,7 +182,7 @@ function App(){
   }
   async function send(text=input,existingTicket?:number){
     const clean=text.trim()
-    if(!clean||!permitted('chat')||!session)return
+    if(!clean||!permitted('chat'))return
     const ticket=existingTicket??++sequence.current
     engine.current.stopSpeech()
     if(profile.speech&&config?.speech)void engine.current.unlock().catch(()=>undefined)
@@ -188,11 +190,14 @@ function App(){
     abort.current?.abort();abort.current=controller
     setNotice('');setPhase('PROCESSING');setInput('')
     const previous=messages
+    const body=guest?{text:clean,language:profile.language,history:previous.slice(-4)
+      .filter(message=>message.content.length>0)
+      .map(({role,content})=>({role,content:content.slice(0,2000)}))}:{conversationId:current,text:clean}
     const user:Message={role:'user',content:clean}
     setMessages([...previous,user])
     let answer='', id=current
     try {
-      const response=await api('chat',session,{method:'POST',signal:controller.signal,body:JSON.stringify({conversationId:current,text:clean})})
+      const response=await api('chat',session,{method:'POST',signal:controller.signal,body:JSON.stringify(body)})
       id=response.headers.get('X-Conversation-Id')||current
       if(ticket!==sequence.current)return
       setCurrent(id)
@@ -209,13 +214,13 @@ function App(){
       const savedId=(error as {conversationId?:string}).conversationId||id
       if(savedId){setCurrent(savedId);void refresh().catch(report)}
       else {setMessages(previous);setInput(clean)}
-      if(answer)setMessages([...previous,user])
+      if(answer&&savedId)setMessages([...previous,user])
       report(error)
     }finally{if(abort.current===controller)abort.current=null}
   }
   async function microphone(){
     if(phase==='LISTENING'){if(engine.current.cancelPendingRecording())setPhase('STANDBY');return}
-    if(busy||!permitted('chat')||!session)return
+    if(busy||!permitted('chat'))return
     const ticket=++sequence.current
     setNotice('');setPhase('LISTENING')
     try{
@@ -240,13 +245,15 @@ function App(){
     sequence.current++;abort.current?.abort();engine.current.stopSpeech();engine.current.finishRecording(false);setPhase('STANDBY')
   }
   async function save(next:Profile){
+    if(guest){setProfile(next);setSaved(true);return}
+    if(!authMode)return
     if(!db||!uid||recovery){setPanel('profile');return}
     const {error}=await db.from('profiles').upsert({...next,user_id:uid})
     if(error){report(new Error(error.message));return}
     if(activeUid.current===uid){setProfile(next);setSaved(true)}
   }
   async function attach(file?:File){
-    if(!file||!session)return
+    if(!file||(!guest&&!session))return
     if(file.size>8*1024*1024){report(new Error('Dateien dürfen höchstens 8 MB groß sein.'));return}
     const mime=file.type||({txt:'text/plain',pdf:'application/pdf',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'} as Record<string,string>)[file.name.split('.').pop()?.toLowerCase()||'']||''
     try{
@@ -257,17 +264,17 @@ function App(){
   function submit(event:FormEvent){event.preventDefault();if(!busy)void send()}
   function switchPanel(next:Panel){setSaved(false);setPanel(value=>value===next?null:next)}
   const last=messages.at(-1)
-  const setup=config?(!config.auth?'Supabase einrichten':!config.chat?'Groq einrichten':null):null
+  const setup=config?(authMode&&!config.auth?'Supabase einrichten':!config.chat?'Groq einrichten':guest?'Gastmodus':null):null
   return <div className="app">
     <header className="topbar">
       <button className="brand" aria-label="SAVRAN Startseite" onClick={()=>{if(!busy){reset();close()}}}><Mark/><span><b>S.A.V.R.A.N.</b><small>KI-KOMMANDOZENTRALE</small></span></button>
-      <div className="top-actions"><Time/><span className="top-separator"/><button className="profile-btn" onClick={()=>switchPanel('profile')}><UserRound size={17}/><span>{session?(profile.name||'Profil'):'Anmelden'}</span></button></div>
+      <div className="top-actions"><Time/>{authMode&&<><span className="top-separator"/><button className="profile-btn" onClick={()=>switchPanel('profile')}><UserRound size={17}/><span>{session?(profile.name||'Profil'):'Anmelden'}</span></button></>}</div>
     </header>
     <nav className="rail" aria-label="Kommandonavigation">
       <div>
         <button title="Neuer Chat" aria-label="Neuer Chat" disabled={busy} onClick={reset}><Plus size={20}/></button>
         <button title="Gesprächsverlauf" aria-label="Gesprächsverlauf" aria-pressed={panel==='history'} onClick={()=>switchPanel('history')}><HistoryIcon size={19}/></button>
-        <button title="Langzeitgedächtnis" aria-label="Langzeitgedächtnis" aria-pressed={panel==='memory'} onClick={()=>switchPanel('memory')}><BrainCircuit size={19}/></button>
+        {authMode&&<button title="Langzeitgedächtnis" aria-label="Langzeitgedächtnis" aria-pressed={panel==='memory'} onClick={()=>switchPanel('memory')}><BrainCircuit size={19}/></button>}
         <button title="Integrationen" aria-label="Integrationen" aria-pressed={panel==='integrations'} onClick={()=>switchPanel('integrations')}><Workflow size={19}/></button>
       </div>
       <button title="Einstellungen" aria-label="Einstellungen" aria-pressed={panel==='settings'} onClick={()=>switchPanel('settings')}><Settings2 size={19}/></button>
@@ -284,7 +291,7 @@ function App(){
         {!last&&!notice&&<div className="suggestions">{suggestions.map(({icon:Icon,label,prompt})=><button key={label} onClick={()=>{setInput(prompt);inputRef.current?.focus()}}><Icon size={15}/>{label}</button>)}</div>}
         <form className="composer" onSubmit={submit}>
           <input type="file" accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.webp" hidden ref={fileRef} onChange={e=>{void attach(e.target.files?.[0]);e.target.value=''}}/>
-          <button type="button" className="icon-button attachment" aria-label="Dateiformat prüfen" title="Dateiformat prüfen" onClick={()=>session?fileRef.current?.click():setPanel('profile')}><Paperclip size={18}/></button>
+          <button type="button" className="icon-button attachment" aria-label="Dateiformat prüfen" title="Dateiformat prüfen" onClick={()=>{if(guest||session)fileRef.current?.click();else if(authMode)setPanel('profile')}}><Paperclip size={18}/></button>
           <textarea ref={inputRef} aria-label="Nachricht an SAVRAN" placeholder="Nachricht an SAVRAN …" rows={1} value={input} maxLength={8000} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();if(!busy)void send()}}}/>
           <button type="button" className={'icon-button mic '+(phase==='LISTENING'?'recording':'')} aria-label={phase==='LISTENING'?'Aufnahme beenden':'Mikrofon aktivieren'} disabled={phase==='PROCESSING'} onClick={()=>void microphone()}>{phase==='LISTENING'?<Square size={16}/>:<Mic size={19}/>}</button>
           {(phase==='SPEAKING'||phase==='PROCESSING')&&<button type="button" className="icon-button" aria-label="Unterbrechen" title="Unterbrechen" onClick={interrupt}><Square size={16}/></button>}
@@ -296,11 +303,11 @@ function App(){
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>SAVRAN.AI</span><button className="install" onClick={async()=>{if(install){await install.prompt();await install.userChoice;setInstall(undefined)}else setInstallHelp(v=>!v)}}><Download size={13}/> Installieren</button></footer>
     {installHelp&&<div className="install-help" role="status">iOS: In Safari „Teilen“ und „Zum Home-Bildschirm“ wählen. Auf Android oder Desktop die Installationsoption im Browsermenü öffnen.</div>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
-      {panel==='history'&&(session&&!recovery?<History chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
+      {panel==='history'&&(guest||session&&!recovery?<History guest={guest} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
       {panel==='settings'&&<Settings profile={profile} config={config} save={save}/>}
       {panel==='memory'&&(!session||recovery?<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>:<Memories userId={session.user.id} profile={profile} save={save} report={report}/>)}
       {panel==='integrations'&&<div className="fields"><p className="muted">Schnittstellen für zukünftige Versionen.</p><ul className="integrations">{config?.integrations.map(name=><li key={name}>{name}<small>Geplant</small></li>)}</ul></div>}
-      {panel==='profile'&&<Account session={session} profile={profile} save={save} report={report} recovery={recovery} config={config} onRecoveryDone={()=>setRecovery(false)}/>}
+      {authMode&&panel==='profile'&&<Account session={session} profile={profile} save={save} report={report} recovery={recovery} config={config} onRecoveryDone={()=>setRecovery(false)}/>}
       {saved&&<p className="notice" role="status">Gespeichert.</p>}
       {phase==='ERROR'&&notice&&<p className="notice" role="status">{notice}</p>}
     </SidePanel>}

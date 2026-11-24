@@ -16,7 +16,13 @@ npm run dev
 
 Vite läuft standardmäßig auf `http://localhost:5173`, Express auf Port 3000. Die Oberfläche startet auch ohne Anbieterschlüssel und nennt die fehlende Konfiguration. Mikrofonaufnahmen benötigen HTTPS oder localhost.
 
-### Supabase
+### Gastmodus
+
+Der Gastmodus ist die Voreinstellung. Textchat und Spracheingabe benötigen den Groq-Schlüssel. Für Sprachausgabe sind die ElevenLabs-Werte optional. Das aktuelle Gespräch und Einstellungen bleiben im geöffneten Tab und werden beim Neuladen verworfen. Login, Registrierung, gespeicherte Chatverläufe und Langzeitgedächtnis sind ausgeblendet. Gastanfragen werden pro IP begrenzt. Für öffentliche Deployments können zusätzlich Ausgabenlimits bei den API-Anbietern gesetzt werden.
+
+### Supabase und Benutzerkonten später aktivieren
+
+Setze für den Kontomodus `AUTH_ENABLED=true` und konfiguriere die folgenden Supabase-Werte. Starte anschließend einen neuen Build.
 
 1. Supabase-Projekt erstellen und [die SQL-Migration](supabase/migrations/202611230001_initial.sql) über den SQL Editor oder mit der Supabase CLI anwenden.
 2. Öffentliche Projekt-URL und den Anon-Key als `VITE_SUPABASE_URL` und `VITE_SUPABASE_ANON_KEY` setzen. Bei Verwendung neuer Supabase-Schlüssel kann hier der Publishable Key stehen.
@@ -40,7 +46,7 @@ Vite läuft standardmäßig auf `http://localhost:5173`, Express auf Port 3000. 
 
 ## Deployment auf Render
 
-Das Projekt in ein GitHub-Repository übernehmen und in Render als Blueprint mit [render.yaml](render.yaml) verbinden. Die dort markierten Werte und optional `ELEVENLABS_VOICES_JSON` in Render hinterlegen. Anschließend `savran.ai` als Custom Domain beim Web Service hinzufügen, DNS gemäß Render konfigurieren und in Supabase die produktiven Redirects setzen. Änderungen an Vite-Variablen benötigen einen neuen Build. Für Tests unter der Render-Standarddomain zunächst deren HTTPS-Ursprung als `APP_URL` und Supabase-Redirect hinterlegen.
+Das Projekt in ein GitHub-Repository übernehmen und in Render als Blueprint mit [render.yaml](render.yaml) verbinden. Die dort markierten Werte und optional `ELEVENLABS_VOICES_JSON` in Render hinterlegen. Anschließend `savran.ai` als Custom Domain beim Web Service hinzufügen, DNS gemäß Render konfigurieren und bei aktiviertem Kontomodus in Supabase die produktiven Redirects setzen. Änderungen an Vite-Variablen benötigen einen neuen Build. Für Tests unter der Render-Standarddomain zunächst deren HTTPS-Ursprung als `APP_URL` und Supabase-Redirect hinterlegen.
 
 Der Build kompiliert Frontend und Backend und generiert einen versionierten Service Worker. Express verwendet den von Render gelieferten `PORT`. Der Health Check liegt unter `/api/health`. Der Service Worker speichert die öffentliche App-Shell und Build-Assets. Authentifizierte Daten und API-Antworten werden über das Netz geladen. Unter iOS erfolgt die Installation über „Teilen“ und „Zum Home-Bildschirm“.
 
