@@ -68,7 +68,7 @@ function App(){
   const [handsFree,setHandsFree]=useState(false)
   const [voicePrompt,setVoicePrompt]=useState(true)
   const recognition=useRef<Recognition|null>(null)
-  const latestVoice=useRef<(text:string)=>void>(()=>{})
+  const latestVoice=useRef<(text:string)=>boolean>(()=>false)
   const engine=useRef(new AudioEngine())
   const level=useRef(0)
   const abort=useRef<AbortController>(null)
@@ -276,11 +276,14 @@ function App(){
   }
   latestVoice.current=(text)=>{
     const command=text.trim()
-    if(!command)return
-    if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(command)){stopAssistant();return}
+    const wake=command.match(/^hey[\s,!.:-]+savran\b[\s,!.?:-]*/i)
+    if(!wake)return false
+    const request=command.slice(wake[0].length).trim()
     recognition.current?.abort()
-    if(/^(?:hey|hi|hallo|hey savran|hallo savran)[!.?]*$/i.test(command))void speak('Hallo, wie kann ich dir helfen?')
-    else void send(command,undefined,true)
+    if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(request)){stopAssistant();return true}
+    if(!request)void speak('Ja, ich bin bereit. Sage Hey SAVRAN und deine Frage.')
+    else void send(request,undefined,true)
+    return true
   }
   useEffect(()=>{
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
@@ -298,7 +301,7 @@ function App(){
       failures=0
       for(let i=e.resultIndex;i<e.results.length;i++){
         if(e.results[i].isFinal&&!handled&&e.results[i][0].transcript.trim()){
-          handled=true;clearTimeout(timer);latestVoice.current(e.results[i][0].transcript.trim());break
+          if(latestVoice.current(e.results[i][0].transcript.trim())){handled=true;clearTimeout(timer);break}
         }
       }
     }
@@ -391,7 +394,7 @@ function App(){
       <div className="stage">
         <div className="core-label"><span/> NEURALER KERN <span/></div>
         <Orb mode={state} level={level} reduced={reduced}/>
-        <div className="identity"><h1>S.A.V.R.A.N.</h1><p>Smart Adaptive Virtual Reasoning and Assistance Network</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?'Ich höre zu':labels[state]}</div></div>
+        <div className="identity"><h1>S.A.V.R.A.N.</h1><p>Smart Adaptive Virtual Reasoning and Assistance Network</p><div className={'status '+state.toLowerCase()} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey SAVRAN':labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
@@ -409,7 +412,7 @@ function App(){
       </div>
     </main>
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>SAVRAN.AI</span><button className="install" onClick={async()=>{if(install){await install.prompt();await install.userChoice;setInstall(undefined)}else setInstallHelp(v=>!v)}}><Download size={13}/> Installieren</button></footer>
-    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>SAVRAN Sprachmodus</h2><p>Erlaube das Mikrofon, um direkt mit SAVRAN zu sprechen. Gesprochene Sätze werden zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{setVoicePrompt(false);void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
+    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>SAVRAN Sprachmodus</h2><p>Erlaube das Mikrofon und beginne jede Frage mit „Hey SAVRAN“. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{setVoicePrompt(false);void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
     {installHelp&&<div className="install-help" role="status">iOS: In Safari „Teilen“ und „Zum Home-Bildschirm“ wählen. Auf Android oder Desktop die Installationsoption im Browsermenü öffnen.</div>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
       {panel==='history'&&(guest||session&&!recovery?<History guest={guest} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
