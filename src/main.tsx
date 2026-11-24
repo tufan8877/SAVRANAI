@@ -4,6 +4,7 @@ import type {Session} from '@supabase/supabase-js'
 import {AudioLines,ArrowUp,BrainCircuit,ChevronDown,CircleHelp,Clock3,Download,History as HistoryIcon,Mic,Paperclip,Plus,Settings2,Square,UserRound,Workflow,X} from 'lucide-react'
 import type {CoreState} from './Core'
 import {AudioEngine} from './audio'
+import {startWakeListener,wakePrompt,wakeRecognition} from './wake'
 import {consumeChat} from './chat-stream'
 import {api,db,defaults,messageFor,type Chat,type Config,type Message,type Profile} from './data'
 import {Account,History,Memories,Settings,SidePanel,type Panel} from './Workspace'
@@ -57,6 +58,13 @@ function App(){
   const [saved,setSaved]=useState(false)
   const [installHelp,setInstallHelp]=useState(false)
   const engine=useRef(new AudioEngine())
+  const [wakeEnabled,setWakeEnabled]=useState(()=>localStorage.getItem('savran-wake')!=='off')
+  const [wakeAttempt,setWakeAttempt]=useState(0)
+  const [wakeState,setWakeState]=useState<'waiting'|'active'|'blocked'>('waiting')
+  const stopWake=useRef<()=>void>(undefined)
+  const stopQuestion=useRef<()=>void>(undefined)
+  const handleWake=useRef<(prompt:string)=>void>(undefined)
+  const Recognition=wakeRecognition()
   const level=useRef(0)
   const abort=useRef<AbortController>(null)
   const sequence=useRef(0)
@@ -107,18 +115,31 @@ function App(){
     const motion=()=>setReduced(mq.matches)
     const installEvent=(e:Event)=>{e.preventDefault();setInstall(e as InstallEvent)}
     const installed=()=>{setInstall(undefined);setInstallHelp(false)}
-    const hide=()=>{if(document.hidden && engine.current.cancelPendingRecording())setPhase(value=>value==='LISTENING'?'STANDBY':value)}
     window.addEventListener('online',update);window.addEventListener('offline',update)
     window.addEventListener('beforeinstallprompt',installEvent);window.addEventListener('appinstalled',installed)
-    document.addEventListener('visibilitychange',hide)
     mq.addEventListener('change',motion)
     return ()=>{
       window.removeEventListener('online',update);window.removeEventListener('offline',update)
       window.removeEventListener('beforeinstallprompt',installEvent);window.removeEventListener('appinstalled',installed)
-      document.removeEventListener('visibilitychange',hide)
       mq.removeEventListener('change',motion)
     }
   },[])
+  useEffect(()=>{
+    if(phase!=='LISTENING')return
+    const stopListening=()=>{
+      sequence.current++
+      stopQuestion.current?.()
+      engine.current.finishRecording(false)
+      setPhase('STANDBY')
+    }
+    const hide=()=>{if(document.hidden)stopListening()}
+    document.addEventListener('visibilitychange',hide)
+    window.addEventListener('offline',stopListening)
+    return ()=>{
+      document.removeEventListener('visibilitychange',hide)
+      window.removeEventListener('offline',stopListening)
+    }
+  },[phase])
   useEffect(()=>{
     if(!online)return
     const ctl=new AbortController()
@@ -135,27 +156,79 @@ function App(){
     return ()=>cancelAnimationFrame(frame)
   },[phase])
   useEffect(()=>{engine.current.setVolume(profile.volume)},[profile.volume])
-  useEffect(()=>()=>{abort.current?.abort();engine.current.dispose()},[])
-  function permitted(feature:'chat'|'speech'){
+  useEffect(()=>()=>{abort.current?.abort();stopQuestion.current?.();engine.current.dispose()},[])
+  useEffect(()=>{
+    if(!wakeEnabled||!Recognition)return
+    function unlockAudio(){
+      void engine.current.unlock().catch(()=>undefined)
+    }
+    window.addEventListener('click',unlockAudio,{once:true})
+    return ()=>window.removeEventListener('click',unlockAudio)
+  },[Recognition,wakeEnabled])
+  const wakeAvailable=Boolean(Recognition&&online&&config?.chat&&(guest||uid&&!recovery))
+  useEffect(()=>{
+    if(!Recognition||!wakeAvailable||!wakeEnabled||phase!=='STANDBY')return
+    let stop:(()=>void)|undefined
+    let blocked=false
+    function sync(){
+      if(document.hidden){
+        stop?.();stop=undefined;stopWake.current=undefined
+        setWakeState('waiting')
+      }else if(!stop&&!blocked&&Recognition){
+        stop=startWakeListener(Recognition,{
+          ready:()=>setWakeState('active'),
+          blocked:()=>{blocked=true;setWakeState('blocked')},
+          wake:prompt=>{
+            setWakeState('waiting')
+            handleWake.current?.(prompt)
+          },
+        })
+        stopWake.current=stop
+      }
+    }
+    sync()
+    document.addEventListener('visibilitychange',sync)
+    return ()=>{
+      stop?.();stopWake.current=undefined
+      document.removeEventListener('visibilitychange',sync)
+    }
+  },[Recognition,wakeAvailable,wakeEnabled,wakeAttempt,phase])
+  function toggleWake(){
+    if(wakeEnabled&&wakeState!=='blocked'){
+      stopWake.current?.()
+      setWakeEnabled(false)
+      localStorage.setItem('savran-wake','off')
+      return
+    }
+    void engine.current.unlock().catch(()=>undefined)
+    localStorage.removeItem('savran-wake')
+    setWakeState('waiting')
+    setWakeEnabled(true)
+    setWakeAttempt(value=>value+1)
+  }
+  function permitted(){
     if(!online){setNotice('Du bist offline. Stelle eine Internetverbindung her.');return false}
     if(!config){report(new Error('Die Serverkonfiguration ist momentan nicht erreichbar.'));return false}
     if(authMode&&(!config.auth||!db)){report(new Error('Supabase ist noch nicht konfiguriert.'));return false}
-    if(!config[feature]){
-      report(new Error(feature==='chat'?'Groq ist noch nicht konfiguriert. Hinterlege den API-Key auf dem Server.':'ElevenLabs ist noch nicht konfiguriert. Hinterlege den API-Key und eine Voice-ID.'))
+    if(!config.chat){
+      report(new Error('Groq ist noch nicht konfiguriert. Hinterlege den API-Key auf dem Server.'))
       return false
     }
     if(authMode&&(!session||recovery)){setPanel('profile');return false}
     return true
   }
   function reset(){
-    sequence.current++;abort.current?.abort();engine.current.stopSpeech();engine.current.finishRecording(false)
+    sequence.current++;abort.current?.abort();stopQuestion.current?.();engine.current.stopSpeech();engine.current.finishRecording(false)
     setCurrent(undefined);setMessages([]);setInput('');setNotice('');setPhase('STANDBY')
   }
   async function openChat(id:string){
     if(!db||!uid)return
     const client=db
     const ticket=++sequence.current
+    abort.current?.abort()
+    stopQuestion.current?.()
     engine.current.stopSpeech()
+    engine.current.finishRecording(false)
     setNotice('');setPhase('PROCESSING')
     try{
       const all:Message[]=[]
@@ -170,22 +243,39 @@ function App(){
     }catch(error){if(ticket===sequence.current)report(error)}
   }
   async function speak(text:string,ticket=++sequence.current){
-    if(!permitted('speech'))return
-    engine.current.stopSpeech()
+    if(ticket!==sequence.current||!text.trim())return false
+    stopWake.current?.()
     setNotice('');setPhase('PROCESSING')
+    const language=profile.language==='auto'?'de-DE':profile.language
+    let started=false
+    const onStart=()=>{
+      started=true
+      if(ticket===sequence.current)setPhase('SPEAKING')
+    }
     try {
-      await engine.current.speak(signal=>api('speech',session,{method:'POST',signal,body:JSON.stringify({text,voice:profile.voice})}),profile.volume,()=>{
-        if(ticket===sequence.current)setPhase('SPEAKING')
-      })
-      if(ticket===sequence.current)setPhase('STANDBY')
-    }catch(error){if(ticket===sequence.current)report(error)}
+      if(config?.speech&&(engine.current.canPlay||!globalThis.speechSynthesis)){
+        try {
+          await engine.current.speak(signal=>api('speech',session,{method:'POST',signal,body:JSON.stringify({text,voice:profile.voice})}),profile.volume,onStart)
+        } catch(error){
+          if(ticket!==sequence.current)return false
+          if(started||!globalThis.speechSynthesis)throw error
+          await engine.current.speakInBrowser(text,language,profile.volume,onStart)
+        }
+      } else {
+        await engine.current.speakInBrowser(text,language,profile.volume,onStart)
+      }
+      if(ticket!==sequence.current)return false
+      setPhase('STANDBY')
+      return true
+    }catch(error){if(ticket===sequence.current)report(error);return false}
   }
   async function send(text=input,existingTicket?:number){
     const clean=text.trim()
-    if(!clean||!permitted('chat'))return
+    if(!clean||!permitted())return
+    stopWake.current?.()
     const ticket=existingTicket??++sequence.current
     engine.current.stopSpeech()
-    if(profile.speech&&config?.speech)void engine.current.unlock().catch(()=>undefined)
+    if((existingTicket!==undefined||profile.speech)&&config?.speech)void engine.current.unlock().catch(()=>undefined)
     const controller=new AbortController()
     abort.current?.abort();abort.current=controller
     setNotice('');setPhase('PROCESSING');setInput('')
@@ -208,7 +298,7 @@ function App(){
       if(ticket!==sequence.current)return
       setPhase('STANDBY')
       void refresh().catch(report)
-      if(profile.speech&&config?.speech)void speak(answer,ticket)
+      if(existingTicket!==undefined||profile.speech)void speak(answer,ticket)
     }catch(error){
       if(ticket!==sequence.current||controller.signal.aborted)return
       const savedId=(error as {conversationId?:string}).conversationId||id
@@ -219,30 +309,74 @@ function App(){
     }finally{if(abort.current===controller)abort.current=null}
   }
   async function microphone(){
-    if(phase==='LISTENING'){if(engine.current.cancelPendingRecording())setPhase('STANDBY');return}
-    if(busy||!permitted('chat'))return
-    const ticket=++sequence.current
+    if(phase==='LISTENING'){
+      if(stopQuestion.current){stopQuestion.current();setPhase('STANDBY')}
+      else if(engine.current.cancelPendingRecording())setPhase('STANDBY')
+      return
+    }
+    if(busy||!permitted())return
+    stopWake.current?.()
+    await listen(++sequence.current)
+  }
+  async function listen(ticket:number){
+    if(ticket!==sequence.current||document.hidden||!navigator.onLine)return
     setNotice('');setPhase('LISTENING')
     try{
       await engine.current.record(blob=>{
         if(ticket!==sequence.current)return
-        if(!blob.size){report(new Error('Keine Aufnahme erkannt.'));return}
+        if(!blob.size){setPhase('STANDBY');return}
         setPhase('PROCESSING')
         const controller=new AbortController()
         abort.current=controller
         void api('transcribe',session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
-          .then(r=>r.json()).then(({text})=>{
+          .then(r=>r.json()).then(async ({text}:{text:string})=>{
             if(ticket!==sequence.current)return
-            if(!text)throw new Error('Whisper hat keine Sprache erkannt.')
-            setInput(text);setPhase('STANDBY')
-            void send(text,ticket)
+            if(!text.trim())throw new Error('Es wurde keine Sprache erkannt. Versuche es noch einmal.')
+            const prompt=wakePrompt(text)
+            if(prompt==='')await greet(ticket)
+            else void send(prompt??text,ticket)
           }).catch(error=>{if(ticket===sequence.current&&!controller.signal.aborted)report(error)})
           .finally(()=>{if(abort.current===controller)abort.current=null})
       })
     }catch(error){if(ticket===sequence.current)report(error)}
   }
+  async function greet(ticket:number,handsFree=false){
+    const greeting=profile.language==='en'?'Yes, how can I help you?':'Ja, wie kann ich dir helfen?'
+    if(!await speak(greeting,ticket)||ticket!==sequence.current||document.hidden||!navigator.onLine)return
+    if(!handsFree||!Recognition){await listen(ticket);return}
+    setPhase('LISTENING')
+    let stopRecognition:(()=>void)|undefined
+    const timeout=setTimeout(()=>{
+      stop()
+      if(ticket===sequence.current)setPhase('STANDBY')
+    },12_000)
+    function stop(){
+      clearTimeout(timeout)
+      stopRecognition?.()
+      if(stopQuestion.current===stop)stopQuestion.current=undefined
+    }
+    stopQuestion.current=stop
+    stopRecognition=startWakeListener(Recognition,{
+      question:true,
+      ready:()=>undefined,
+      blocked:()=>{
+        stop()
+        if(ticket===sequence.current)report(new Error('Die Spracherkennung ist momentan nicht verfügbar.'))
+      },
+      wake:text=>{
+        stop()
+        if(ticket===sequence.current)void send(wakePrompt(text)||text,ticket)
+      },
+    })
+  }
+  handleWake.current=prompt=>{
+    if(!permitted())return
+    const ticket=++sequence.current
+    if(prompt)void send(prompt,ticket)
+    else void greet(ticket,true)
+  }
   function interrupt(){
-    sequence.current++;abort.current?.abort();engine.current.stopSpeech();engine.current.finishRecording(false);setPhase('STANDBY')
+    sequence.current++;abort.current?.abort();stopQuestion.current?.();engine.current.stopSpeech();engine.current.finishRecording(false);setPhase('STANDBY')
   }
   async function save(next:Profile){
     if(guest){setProfile(next);setSaved(true);return}
@@ -293,17 +427,22 @@ function App(){
           <input type="file" accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.webp" hidden ref={fileRef} onChange={e=>{void attach(e.target.files?.[0]);e.target.value=''}}/>
           <button type="button" className="icon-button attachment" aria-label="Dateiformat prüfen" title="Dateiformat prüfen" onClick={()=>{if(guest||session)fileRef.current?.click();else if(authMode)setPanel('profile')}}><Paperclip size={18}/></button>
           <textarea ref={inputRef} aria-label="Nachricht an SAVRAN" placeholder="Nachricht an SAVRAN …" rows={1} value={input} maxLength={8000} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();if(!busy)void send()}}}/>
-          <button type="button" className={'icon-button mic '+(phase==='LISTENING'?'recording':'')} aria-label={phase==='LISTENING'?'Aufnahme beenden':'Mikrofon aktivieren'} disabled={phase==='PROCESSING'} onClick={()=>void microphone()}>{phase==='LISTENING'?<Square size={16}/>:<Mic size={19}/>}</button>
+          <button type="button" className={'icon-button mic '+(phase==='LISTENING'?'recording':'')} aria-label={phase==='LISTENING'?'Aufnahme beenden':'Mikrofon aktivieren'} title={phase==='LISTENING'?'Aufnahme beenden':'Mikrofon aktivieren'} disabled={phase==='PROCESSING'} onClick={()=>void microphone()}>{phase==='LISTENING'?<Square size={16}/>:<Mic size={19}/>}</button>
           {(phase==='SPEAKING'||phase==='PROCESSING')&&<button type="button" className="icon-button" aria-label="Unterbrechen" title="Unterbrechen" onClick={interrupt}><Square size={16}/></button>}
           <button type="submit" className="send" aria-label="Nachricht senden" disabled={busy||!input.trim()}><ArrowUp size={21}/></button>
         </form>
-        <div className="composer-meta"><span><AudioLines size={13}/> SPRACHE & TEXT</span><span>{setup||'ENTER ZUM SENDEN'}</span></div>
+        <div className="composer-meta">
+          <span><AudioLines size={13}/> SPRACHE & TEXT</span>
+          {wakeAvailable&&phase==='STANDBY'?<button className="wake-toggle" type="button" onClick={toggleWake} title="Verwendet die Spracherkennung deines Browsers">
+            {!wakeEnabled?'„Hey Savran“ einschalten':wakeState==='blocked'?'Mikrofon für „Hey Savran“ freigeben':wakeState==='active'?'„Hey Savran“ aktiv · pausieren':'„Hey Savran“ wird aktiviert …'}
+          </button>:<span>{phase==='LISTENING'?'Sprich jetzt':!Recognition&&phase==='STANDBY'?'„Hey Savran“ im Browser nicht verfügbar':setup||'ENTER ZUM SENDEN'}</span>}
+        </div>
       </div>
     </main>
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>SAVRAN.AI</span><button className="install" onClick={async()=>{if(install){await install.prompt();await install.userChoice;setInstall(undefined)}else setInstallHelp(v=>!v)}}><Download size={13}/> Installieren</button></footer>
     {installHelp&&<div className="install-help" role="status">iOS: In Safari „Teilen“ und „Zum Home-Bildschirm“ wählen. Auf Android oder Desktop die Installationsoption im Browsermenü öffnen.</div>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
-      {panel==='history'&&(guest||session&&!recovery?<History guest={guest} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
+      {panel==='history'&&(guest||session&&!recovery?<History guest={guest} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>{if(config?.speech)void engine.current.unlock().catch(()=>undefined);void speak(text)}} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
       {panel==='settings'&&<Settings profile={profile} config={config} save={save}/>}
       {panel==='memory'&&(!session||recovery?<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>:<Memories userId={session.user.id} profile={profile} save={save} report={report}/>)}
       {panel==='integrations'&&<div className="fields"><p className="muted">Schnittstellen für zukünftige Versionen.</p><ul className="integrations">{config?.integrations.map(name=><li key={name}>{name}<small>Geplant</small></li>)}</ul></div>}

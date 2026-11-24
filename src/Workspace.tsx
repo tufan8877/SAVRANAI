@@ -84,8 +84,8 @@ export function Settings({profile,config,save}:{profile:Profile;config?:Config;s
       <option value="">Standardstimme</option>{config?.voices.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
     </select></label>
     <label>Lautstärke · {Math.round(draft.volume*100)} %<input type="range" min={0} max={1} step={.01} value={draft.volume} onChange={e=>setDraft({...draft,volume:Number(e.target.value)})}/></label>
-    <label className="check"><input type="checkbox" checked={draft.speech} onChange={e=>setDraft({...draft,speech:e.target.checked})}/> Antworten automatisch vorlesen</label>
-    {!config?.speech&&<p className="muted">Sprachausgabe erfordert eine ElevenLabs-Konfiguration.</p>}
+    <label className="check"><input type="checkbox" checked={draft.speech} onChange={e=>setDraft({...draft,speech:e.target.checked})}/> Auch Antworten auf getippte Nachrichten automatisch vorlesen</label>
+    {!config?.speech&&<p className="muted">Savran verwendet die Stimme deines Browsers.</p>}
     <p className="muted">Sprachmodell · {config?.model||'–'}</p>
     <button className="action-btn">Speichern</button>
   </form>
