@@ -71,8 +71,9 @@ function signalFor(res: Response, timeout = 90_000) {
   return AbortSignal.any([controller.signal,AbortSignal.timeout(timeout)])
 }
 function upstreamError(res: Response, status: number, name: string) {
-  if (status === 429) return error(res,429,'provider_limit',name+' hat das Anfragelimit erreicht.')
-  return error(res,502,'provider_error',name+' konnte die Anfrage nicht verarbeiten.')
+  console.warn('Upstream failure',name,status)
+  if (status === 429) return error(res,429,'provider_limit','CORE hat das Anfragelimit erreicht. Bitte warte einen Moment.')
+  return error(res,502,'provider_error','CORE konnte die Anfrage nicht verarbeiten.')
 }
 const activeChats = new Set<string>()
 const chatInput = z.object({
@@ -204,7 +205,7 @@ app.post('/api/photo',express.raw({type:'application/octet-stream',limit:'4mb'})
   if(!['image/jpeg','image/png','image/webp'].includes(mime)||!Buffer.isBuffer(req.body)||!await attachmentFormat(req.body,mime))return error(res,415,'file_format','Ungültiges Bild.')
   const question=typeof req.query.question==='string'?req.query.question.slice(0,2000):'Beschreibe und analysiere dieses Foto auf Deutsch.'
   const response=await analyzePhoto(req.body,mime,question,signalFor(res))
-  if(!response.ok){await response.body?.cancel();return upstreamError(res,response.status,'Groq')}
+  if(!response.ok){const detail=await response.json().catch(()=>null);console.warn('Vision failure',response.status,detail?.error?.code,detail?.error?.type);return upstreamError(res,response.status,'Groq')}
   const data=await response.json()
   const answer=data.choices?.[0]?.message?.content
   if(typeof answer!=='string'||!answer.trim())return error(res,502,'vision','Keine Bildantwort erhalten.')
