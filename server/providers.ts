@@ -51,3 +51,7 @@ export function synthesize(text: string, voice: string, signal: AbortSignal) {
     body:JSON.stringify({text,reference_id:voice,format:'pcm',sample_rate:24000,latency:'balanced'}),
   })
 }
+
+export function analyzePhoto(bytes:Buffer,mime:string,question:string,signal:AbortSignal){
+ return groq('chat/completions',JSON.stringify({model:process.env.GROQ_VISION_MODEL||'meta-llama/llama-4-scout-17b-16e-instruct',messages:[{role:'system',content:systemPrompt},{role:'user',content:[{type:'text',text:question},{type:'image_url',image_url:{url:'data:'+mime+';base64,'+bytes.toString('base64')}}]}],max_completion_tokens:2048}),signal,{'Content-Type':'application/json'})
+}
