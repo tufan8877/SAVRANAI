@@ -66,7 +66,7 @@ export function History({chats,id,messages,newChat,open,refresh,report,speak,bus
     </div>
     </>}
     {!!messages.length&&<section className="transcript" aria-label="Nachrichten im aktuellen Gespräch">{messages.map((m,i)=><article key={m.id||i}>
-      <header>{m.role==='assistant'?'SAVRAN':'Du'}<span>
+      <header>{m.role==='assistant'?'CORE':'Du'}<span>
       {m.role==='assistant'&&<button className="icon-button" aria-label="Vorlesen" disabled={busy} onClick={()=>speak(m.content)}><AudioLines size={14}/></button>}
       <button className="icon-button" aria-label="Nachricht kopieren" onClick={()=>void navigator.clipboard.writeText(m.content).then(()=>setCopied(i)).catch(report)}>{copied===i?'Kopiert':<Copy size={14}/>}</button></span></header>
       <div>{m.content}</div>
