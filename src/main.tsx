@@ -153,7 +153,7 @@ function App(){
     if(!config){report(new Error('Die Serverkonfiguration ist momentan nicht erreichbar.'));return false}
     if(authMode&&(!config.auth||!db)){report(new Error('Supabase ist noch nicht konfiguriert.'));return false}
     if(!config[feature]){
-      report(new Error(feature==='chat'?'Groq ist noch nicht konfiguriert. Hinterlege den API-Key auf dem Server.':'ElevenLabs ist noch nicht konfiguriert. Hinterlege den API-Key und eine Voice-ID.'))
+      report(new Error(feature==='chat'?'Groq ist noch nicht konfiguriert. Hinterlege den API-Key auf dem Server.':'Fish Audio ist noch nicht konfiguriert. Hinterlege den API-Key und eine Voice-ID.'))
       return false
     }
     if(authMode&&(!session||recovery)){setPanel('profile');return false}
