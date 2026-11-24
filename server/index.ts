@@ -9,7 +9,7 @@ import {pipeline} from 'node:stream/promises'
 import {resolve} from 'node:path'
 import {pathToFileURL} from 'node:url'
 import {z} from 'zod'
-import {groqModel, provider, synthesize, systemPrompt, voices, type Message} from './providers.js'
+import {groqModel, fishKey, provider, synthesize, systemPrompt, voices, type Message} from './providers.js'
 import {attachmentFormat, audioFormat, audioLimit, fileLimit} from './media.js'
 import {integrationCatalog} from './integrations.js'
 
@@ -25,7 +25,7 @@ const supabaseOrigin = url ? new URL(url).origin : ''
 const appOrigin = new URL(process.env.APP_URL || 'https://savran.ai').origin
 const origins = new Set([appOrigin, ...(process.env.RENDER_EXTERNAL_URL ? [new URL(process.env.RENDER_EXTERNAL_URL).origin] : []), ...(!production ? ['http://localhost:5173','http://127.0.0.1:5173'] : [])])
 const chatReady = Boolean(process.env.GROQ_API_KEY)
-const speechReady = Boolean(process.env.ELEVENLABS_API_KEY && voices.length)
+const speechReady = Boolean(fishKey && voices.length)
 const accountDeletion = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
 function error(res: Response, status: number, code: string, message: string) {
   return res.status(status).json({error:{code,message}})
@@ -188,13 +188,13 @@ app.post('/api/transcribe',express.raw({type:'application/octet-stream',limit:au
   return res.json({text:typeof data.text === 'string' ? data.text.trim().slice(0,8000) : ''})
 })
 app.post('/api/speech',async (req,res) => {
-  if (!speechReady) return error(res,503,'speech_config','ElevenLabs API-Key und mindestens eine Voice-ID müssen konfiguriert werden.')
+  if (!speechReady) return error(res,503,'speech_config','Fish Audio API-Key und mindestens eine Voice-ID müssen konfiguriert werden.')
   const input = z.object({text:z.string().trim().min(1).max(24000),voice:z.string().max(80).optional()}).safeParse(req.body)
   if (!input.success) return error(res,400,'speech_input','Ungültiger Text für die Sprachausgabe.')
   const voice = input.data.voice || voices[0].id
   if (!voices.some(item=>item.id===voice)) return error(res,400,'speech_voice','Diese Stimme ist nicht verfügbar.')
   const response = await synthesize(input.data.text,voice,signalFor(res))
-  if (!response.ok || !response.body) { await response.body?.cancel(); return upstreamError(res,response.status,'ElevenLabs') }
+  if (!response.ok || !response.body) { await response.body?.cancel(); console.warn('Fish Audio HTTP',response.status); if(response.status===401||response.status===403)return error(res,502,'speech_credentials','Fish Audio: API-Key oder Berechtigung ungültig.'); if(response.status===402)return error(res,502,'speech_credit','Fish Audio: API-Guthaben fehlt.'); return upstreamError(res,response.status,'Fish Audio') }
   res.set({'Content-Type':'application/octet-stream','X-Audio-Sample-Rate':'24000','X-Accel-Buffering':'no'})
   await pipeline(Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),res)
 })
