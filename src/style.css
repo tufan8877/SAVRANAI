@@ -77,6 +77,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .send:disabled{opacity:.65}
 .send:hover:not(:disabled){background:#ffe1aa}
 .composer-meta{display:flex;justify-content:space-between;gap:8px;color:#a8957a;font:10px var(--mono);letter-spacing:.13em;text-transform:uppercase}
+.wake-toggle{background:transparent;border:0;padding:0;color:inherit;font:inherit;text-align:right;text-decoration:underline;text-underline-offset:3px}
 .composer-meta span:first-child{display:flex;align-items:center;gap:6px}
 .feedback,.latest{display:flex;gap:9px;align-items:center;color:#e5c79f;border:1px solid #4e3121;background:#1b120c;border-radius:8px;padding:4px 8px 4px 12px;min-height:38px;font-size:13px}
 .feedback .icon-button,.latest .icon-button{margin-left:auto;width:31px;height:29px}

@@ -12,6 +12,7 @@ export class AudioEngine {
   private opening=0
   private sources=new Set<AudioBufferSourceNode>()
   private sample?:Float32Array<ArrayBuffer>
+  get canPlay(){return this.context?.state==='running'}
   async unlock() {
     if(!this.context || this.context.state==='closed'){
       this.context=new AudioContext()
@@ -111,15 +112,28 @@ export class AudioEngine {
     const utterance=new SpeechSynthesisUtterance(text)
     utterance.lang=language
     utterance.volume=volume
+    let startTimer:ReturnType<typeof setTimeout>|undefined
     try {
       await new Promise<void>((resolve,reject)=>{
         controller.signal.addEventListener('abort',()=>{resolve();synthesis.cancel()},{once:true})
-        utterance.onstart=()=>{if(!controller.signal.aborted)onStart()}
+        startTimer=setTimeout(()=>{
+          reject(new Error('Die Sprachausgabe konnte nicht starten. Tippe einmal in die App und versuche es erneut.'))
+          synthesis.cancel()
+        },8000)
+        utterance.onstart=()=>{
+          clearTimeout(startTimer)
+          if(!controller.signal.aborted)onStart()
+        }
         utterance.onend=()=>resolve()
-        utterance.onerror=()=>reject(new Error('Die Browserstimme konnte die Antwort nicht vorlesen.'))
+        utterance.onerror=event=>reject(new Error(event.error==='not-allowed'
+          ?'Der Browser hat die Sprachausgabe blockiert. Tippe einmal in die App und versuche es erneut.'
+          :'Die Browserstimme konnte die Antwort nicht vorlesen.'))
         synthesis.speak(utterance)
       })
-    } finally {if(this.playback===controller)this.playback=undefined}
+    } finally {
+      clearTimeout(startTimer)
+      if(this.playback===controller)this.playback=undefined
+    }
   }
   async speak(load:(signal:AbortSignal)=>Promise<Response>,volume:number,onStart:()=>void) {
     this.stopSpeech()
