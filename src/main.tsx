@@ -411,7 +411,7 @@ function App(){
           {(phase==='SPEAKING'||phase==='PROCESSING')&&<button type="button" className="icon-button" aria-label="Unterbrechen" title="Unterbrechen" onClick={interrupt}><Square size={16}/></button>}
           <button type="submit" className="send" aria-label="Nachricht senden" disabled={busy||!input.trim()}><ArrowUp size={21}/></button>
         </form>
-        <div className="composer-meta"><span><AudioLines size={13}/> SPRACHE & TEXT</span><button type="button" aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{color:handsFree?'#55e6ff':undefined,background:'transparent',border:'1px solid currentColor',borderRadius:6,padding:'4px 7px',cursor:'pointer'}}>{handsFree?'Sprachmodus: AN':'Sprachmodus starten'}</button><span>{setup||'ENTER ZUM SENDEN'}</span></div>
+        <div className="composer-meta"><span><AudioLines size={13}/> SPRACHE & TEXT</span><button type="button" aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{color:handsFree?'#efae5d':undefined,background:handsFree?'rgba(239,174,93,.09)':'transparent',border:'1px solid currentColor',borderRadius:6,padding:'4px 7px',cursor:'pointer'}}>{handsFree?'Sprachmodus: AN':'Sprachmodus starten'}</button><span>{setup||'ENTER ZUM SENDEN'}</span></div>
       </div>
     </main>
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>intelaicore.org</span><button className="install" onClick={async()=>{if(install){await install.prompt();await install.userChoice;setInstall(undefined)}else setInstallHelp(v=>!v)}}><Download size={13}/> Installieren</button></footer>
