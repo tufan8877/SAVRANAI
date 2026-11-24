@@ -20,9 +20,9 @@ services:
         value: openai/gpt-oss-120b
       - key: GROQ_TRANSCRIPTION_MODEL
         value: whisper-large-v3-turbo
-      - key: ELEVENLABS_API_KEY
+      - key: FISH_AUDIO_API_KEY
         sync: false
-      - key: ELEVENLABS_VOICE_ID
+      - key: FISH_AUDIO_VOICE_ID
         sync: false
-      - key: ELEVENLABS_MODEL_ID
-        value: eleven_flash_v2_5
+      - key: FISH_AUDIO_MODEL
+        value: s2.1-pro-free
