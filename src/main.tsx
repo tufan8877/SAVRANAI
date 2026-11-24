@@ -391,7 +391,7 @@ function App(){
   const setup=config?(authMode&&!config.auth?'Supabase einrichten':!config.chat?'Groq einrichten':guest?'Gastmodus':null):null
   return <div className="app">
     <header className="topbar">
-      <button className="brand" aria-label="CORE Startseite" onClick={()=>{if(!busy){reset();close()}}}><Mark/><span><b>INTEL AI CORE</b><small>KI-KOMMANDOZENTRALE</small></span></button>
+      <button className="brand" aria-label="CORE Startseite" onClick={()=>{if(!busy){reset();close()}}}><Mark/><span><b>INTEL AI CORE</b></span></button>
       <div className="top-actions"><Time/>{authMode&&<><span className="top-separator"/><button className="profile-btn" onClick={()=>switchPanel('profile')}><UserRound size={17}/><span>{session?(profile.name||'Profil'):'Anmelden'}</span></button></>}</div>
     </header>
     <nav className="rail" aria-label="Kommandonavigation">
