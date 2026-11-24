@@ -9,7 +9,7 @@ import {pipeline} from 'node:stream/promises'
 import {resolve} from 'node:path'
 import {pathToFileURL} from 'node:url'
 import {z} from 'zod'
-import {groqModel, fishKey, provider, synthesize, systemPrompt, voices, type Message} from './providers.js'
+import {analyzePhoto, groqModel, fishKey, provider, synthesize, systemPrompt, voices, type Message} from './providers.js'
 import {attachmentFormat, audioFormat, audioLimit, fileLimit} from './media.js'
 import {integrationCatalog} from './integrations.js'
 
@@ -197,6 +197,18 @@ app.post('/api/speech',async (req,res) => {
   if (!response.ok || !response.body) { await response.body?.cancel(); console.warn('Fish Audio HTTP',response.status); if(response.status===401||response.status===403)return error(res,502,'speech_credentials','Fish Audio: API-Key oder Berechtigung ungültig.'); if(response.status===402)return error(res,502,'speech_credit','Fish Audio: API-Guthaben fehlt.'); return upstreamError(res,response.status,'Fish Audio') }
   res.set({'Content-Type':'application/octet-stream','X-Audio-Sample-Rate':'24000','X-Accel-Buffering':'no'})
   await pipeline(Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),res)
+})
+app.post('/api/photo',express.raw({type:'application/octet-stream',limit:'4mb'}),async(req,res)=>{
+  if(!chatReady)return error(res,503,'groq_config','Groq ist nicht konfiguriert.')
+  const mime=typeof req.query.mime==='string'?req.query.mime:''
+  if(!['image/jpeg','image/png','image/webp'].includes(mime)||!Buffer.isBuffer(req.body)||!await attachmentFormat(req.body,mime))return error(res,415,'file_format','Ungültiges Bild.')
+  const question=typeof req.query.question==='string'?req.query.question.slice(0,2000):'Beschreibe und analysiere dieses Foto auf Deutsch.'
+  const response=await analyzePhoto(req.body,mime,question,signalFor(res))
+  if(!response.ok){await response.body?.cancel();return upstreamError(res,response.status,'Groq')}
+  const data=await response.json()
+  const answer=data.choices?.[0]?.message?.content
+  if(typeof answer!=='string'||!answer.trim())return error(res,502,'vision','Keine Bildantwort erhalten.')
+  res.json({answer})
 })
 app.post('/api/files/validate',express.raw({type:'application/octet-stream',limit:fileLimit}),async (req,res) => {
   const mime = typeof req.query.mime === 'string' ? req.query.mime : ''
