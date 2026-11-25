@@ -67,6 +67,7 @@ function Assistant(){
   const [diagnostic,setDiagnostic]=useState('')
   const [diagnosing,setDiagnosing]=useState(false)
   const [handsFree,setHandsFree]=useState(false)
+  const [awaitingCommand,setAwaitingCommand]=useState(false)
   const [voicePrompt,setVoicePrompt]=useState(true)
   const recognition=useRef<Recognition|null>(null)
   const followupUntil=useRef(0)
@@ -166,6 +167,7 @@ function Assistant(){
   }
   function stopAssistant(){
     followupUntil.current=0
+    setAwaitingCommand(false)
     recognition.current?.abort()
     setHandsFree(false);
   }
@@ -266,9 +268,10 @@ function Assistant(){
         if(ticket===sequence.current)setMessages([...previous,user,{role:'assistant',content:answer}])
       })
       if(ticket!==sequence.current)return
-      setPhase('STANDBY')
-      void refresh().catch(report)
+      if(!answer.trim())throw new Error('CORE hat keine Antwort erhalten. Bitte versuche es erneut.')
+      void refresh().catch(()=>undefined)
       if((forceSpeech||profile.speech)&&config?.speech)await speak(answer,ticket)
+      else setPhase('STANDBY')
     }catch(error){
       if(ticket!==sequence.current||controller.signal.aborted)return
       const savedId=(error as {conversationId?:string}).conversationId||id
@@ -280,14 +283,15 @@ function Assistant(){
   }
   latestVoice.current=(text)=>{
     const command=text.trim()
-    const wake=command.match(/^hey[\s,!.:-]+(?:core|kor|kore|chor)\b[\s,!.?:-]*/i)
+    const wake=command.match(/^(?:hey|he|hei|hi|okay|ok)[\s,!.:-]+(?:core|kor|kore|chor|korr|kohr|kora)\b[\s,!.?:-]*/i)
     if(!wake&&Date.now()>followupUntil.current)return false
     followupUntil.current=0
     const request=wake?command.slice(wake[0].length).trim():command
+    setAwaitingCommand(false)
+    if(!request){followupUntil.current=Date.now()+15000;setAwaitingCommand(true);return false}
     recognition.current?.abort()
     if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(request)){stopAssistant();return true}
-    if(!request)void speak('Ja, ich höre zu.').then(()=>{followupUntil.current=Date.now()+12000})
-    else void send(request,undefined,true)
+    void send(request,undefined,true)
     return true
   }
   useEffect(()=>{
@@ -300,8 +304,8 @@ function Assistant(){
     r.lang=profile.language==='en'?'en-US':'de-DE'
     r.continuous=true;r.interimResults=false
     let active=true, timer:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
-    const retry=(delay=700)=>{clearTimeout(timer);if(active&&!document.hidden&&!handled)timer=setTimeout(start,delay)}
-    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start()}catch{retry(1200)}}}
+    const retry=(delay=180)=>{clearTimeout(timer);if(active&&!document.hidden&&!handled)timer=setTimeout(start,delay)}
+    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start()}catch{retry(500)}}}
     r.onresult=e=>{
       failures=0
       for(let i=e.resultIndex;i<e.results.length;i++){
@@ -314,17 +318,18 @@ function Assistant(){
       if(!active||handled)return
       if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){
         setNotice('Mikrofonzugriff nicht verfügbar: '+e.error)
-        retry(3000);return
+        setHandsFree(false);setAwaitingCommand(false);return
       }
       failures++
       retry(Math.min(3000,500*failures))
     }
-    r.onend=()=>retry()
+    r.onend=()=>retry(failures?Math.min(3000,350*failures):180)
     const visibility=()=>{if(document.hidden){clearTimeout(timer);r.abort()}else retry()}
     document.addEventListener('visibilitychange',visibility)
-    retry(900)
+    retry(100)
     return ()=>{active=false;clearTimeout(timer);r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
+  useEffect(()=>{if(!awaitingCommand)return;const timer=setTimeout(()=>{followupUntil.current=0;setAwaitingCommand(false)},15000);return ()=>clearTimeout(timer)},[awaitingCommand])
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
     if(busy||!permitted('chat')||!permitted('speech'))return
@@ -426,7 +431,7 @@ function Assistant(){
     <main className="command">
       <div className="stage">
         <button type="button" aria-label={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} title={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
-        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?'Warte auf Hey CORE':labels[state]}</div></div>
+        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?(awaitingCommand?'Ich höre zu – stelle deine Frage':'Warte auf Hey CORE'):labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
