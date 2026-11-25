@@ -83,6 +83,7 @@ function Assistant(){
   const [handsFree,setHandsFree]=useState(false)
   const [awaitingCommand,setAwaitingCommand]=useState(false)
   const [recognitionReady,setRecognitionReady]=useState(false)
+  const [voiceTrace,setVoiceTrace]=useState('')
   const [voicePrompt,setVoicePrompt]=useState(true)
   const recognition=useRef<Recognition|null>(null)
   const followupUntil=useRef(0)
@@ -469,7 +470,7 @@ function Assistant(){
   }
   latestVoice.current=(text)=>{
     const command=text.trim()
-    const wake=command.match(/^(?:(?:hey|he|hei|hi|okay|ok)[\s,!.:-]*)?(?:core|kor|kore|chor|korr|kohr|kora|koreh)\b[\s,!.?:-]*/i)
+    const wake=command.match(/^(?:(?:hey|he|hei|hi|hallo|okay|ok)[\s,!.:-]*)?(?:core|kor|kore|chor|korr|kohr|kora|koreh|cor|korey|kohl|co|kur)\b[\s,!.?:-]*/i)
     if(!wake&&Date.now()>followupUntil.current)return false
     followupUntil.current=0
     const request=wake?command.slice(wake[0].length).trim():command
@@ -491,14 +492,14 @@ function Assistant(){
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
     let active=true,stream:MediaStream|undefined,context:AudioContext|undefined,recorder:MediaRecorder|undefined,frame=0
     const controller=new AbortController()
-    let chunks:Blob[]=[],started=0,lastVoice=0,processing=false
+    let chunks:Blob[]=[],started=0,lastVoice=0,processing=false,handled=false
     const cleanup=()=>{cancelAnimationFrame(frame);if(recorder?.state==='recording'){recorder.onstop=null;recorder.stop()}stream?.getTracks().forEach(t=>t.stop());if(context&&context.state!=='closed')void context.close().catch(()=>undefined)}
     const begin=async()=>{
       try{
         stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
         if(!active){cleanup();return}
         context=new AudioContext()
-        await context.resume()
+        await Promise.race([context.resume(),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('Mikrofon-Audiokontext blockiert')),5000))])
         if(!active){cleanup();return}
         const analyser=context.createAnalyser();analyser.fftSize=1024
         context.createMediaStreamSource(stream).connect(analyser)
@@ -513,22 +514,22 @@ function Assistant(){
             if(blob.size){
               const response=await api('transcribe',session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
               const result=await response.json()
-              if(active&&typeof result.text==='string'&&result.text.trim()&&latestVoice.current(result.text.trim())){cleanup();return}
+              if(active){const heard=typeof result.text==='string'?result.text.trim():'';setVoiceTrace(heard?'Erkannt: '+heard:'Keine Sprache erkannt.');if(heard&&latestVoice.current(heard)){handled=true;cleanup();return}}
             }
-          }catch(error){if(active)setNotice('Spracherkennung fehlgeschlagen. CORE versucht es erneut.')}
+          }catch(error){if(active)setVoiceTrace('Spracherkennung: '+(error instanceof Error?error.message:String(error)))}
           finally{processing=false;started=0;lastVoice=0}
         }
         setRecognitionReady(true)
         const tick=()=>{
-          if(!active)return
+          if(!active||handled)return
           analyser.getFloatTimeDomainData(samples)
           let sum=0;for(const v of samples)sum+=v*v
-          const loud=Math.sqrt(sum/samples.length)>.025
+          const loud=Math.sqrt(sum/samples.length)>.012
           const now=performance.now()
-          if(!processing&&recorder!.state==='inactive'&&loud){chunks=[];started=lastVoice=now;recorder!.start(200)}
+          if(!processing&&recorder!.state==='inactive'&&loud){chunks=[];started=lastVoice=now;setVoiceTrace('Sprache erkannt – Aufnahme läuft …');recorder!.start(200)}
           if(recorder!.state==='recording'){
             if(loud)lastVoice=now
-            if(now-lastVoice>850||now-started>15000){processing=true;recorder!.stop()}
+            if(now-lastVoice>850||now-started>15000){processing=true;setVoiceTrace('Sprache wird verarbeitet …');recorder!.stop()}
           }
           frame=requestAnimationFrame(tick)
         }
@@ -640,7 +641,7 @@ function Assistant(){
     <main className="command">
       <div className="stage">
         <button type="button" aria-label={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} title={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
-        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?(recognitionReady?(awaitingCommand?'Ich höre zu – stelle deine Frage':'Sag „Hey CORE“ – ich bin für dich da.'):'Mikrofon wird verbunden …'):labels[state]}</div></div>
+        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?(recognitionReady?(awaitingCommand?'Ich höre zu – stelle deine Frage':'Sag „Hey CORE“ – ich bin für dich da.'):'Mikrofon wird verbunden …'):labels[state]}</div>{handsFree&&voiceTrace&&<p style={{fontSize:12,opacity:.85,maxWidth:340,overflowWrap:'anywhere'}}>{voiceTrace}</p>}</div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
