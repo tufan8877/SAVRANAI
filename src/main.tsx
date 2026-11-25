@@ -281,7 +281,7 @@ function Assistant(){
       else {setMessages(previous);setInput(clean)}
       if(answer&&savedId)setMessages([...previous,user])
       report(error)
-    }finally{if(abort.current===controller)abort.current=null}
+    }finally{if(abort.current===controller)abort.current=null;if(ticket===sequence.current&&forceSpeech&&handsFree){followupUntil.current=Date.now()+30000;setAwaitingCommand(true);setPhase('STANDBY')}}
   }
   latestVoice.current=(text)=>{
     const command=text.trim()
@@ -290,8 +290,7 @@ function Assistant(){
     followupUntil.current=0
     const request=wake?command.slice(wake[0].length).trim():command
     setAwaitingCommand(false)
-    if(!request){followupUntil.current=Date.now()+15000;setAwaitingCommand(true);return false}
-    recognition.current?.abort()
+    if(!request){followupUntil.current=Date.now()+30000;setAwaitingCommand(true);return false}
     if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(request)){stopAssistant();return true}
     void send(request,undefined,true)
     return true
@@ -304,7 +303,7 @@ function Assistant(){
     const r=new Constructor()
     recognition.current=r
     r.lang=profile.language==='en'?'en-US':'de-DE'
-    r.continuous=false;r.interimResults=false
+    r.continuous=!/iPhone|iPad|iPod/i.test(navigator.userAgent);r.interimResults=false
     setRecognitionReady(false)
     r.onstart=()=>{if(active)setRecognitionReady(true)}
     let active=true, timer:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
@@ -314,7 +313,7 @@ function Assistant(){
       failures=0
       for(let i=e.resultIndex;i<e.results.length;i++){
         if(e.results[i].isFinal&&!handled&&e.results[i][0].transcript.trim()){
-          if(latestVoice.current(e.results[i][0].transcript.trim())){handled=true;clearTimeout(timer);break}
+          if(latestVoice.current(e.results[i][0].transcript.trim())){handled=true;clearTimeout(timer);r.abort();break}
         }
       }
     }
@@ -324,6 +323,7 @@ function Assistant(){
         setNotice('Mikrofonzugriff nicht verfügbar: '+e.error)
         setHandsFree(false);setAwaitingCommand(false);return
       }
+      if(e.error==='no-speech'||e.error==='aborted'){failures=0;return}
       failures++
       if(e.error!=='no-speech'&&e.error!=='aborted'){setNotice('Spracherkennung: '+e.error+'. Nutze bei Bedarf die Mikrofontaste.');if(failures>=3){setHandsFree(false);return}}
       retry(Math.min(3000,500*failures))
@@ -334,7 +334,7 @@ function Assistant(){
     retry(100)
     return ()=>{active=false;clearTimeout(timer);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
-  useEffect(()=>{if(!awaitingCommand)return;const timer=setTimeout(()=>{followupUntil.current=0;setAwaitingCommand(false)},15000);return ()=>clearTimeout(timer)},[awaitingCommand])
+  useEffect(()=>{if(!awaitingCommand)return;const timer=setTimeout(()=>{followupUntil.current=0;setAwaitingCommand(false)},30000);return ()=>clearTimeout(timer)},[awaitingCommand])
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
     if(busy||!permitted('chat'))return
