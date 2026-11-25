@@ -46,10 +46,16 @@ function loadVoices(): {id:string;name:string}[] {
   return [...result.values()]
 }
 export const voices=loadVoices()
-export function synthesize(text:string,voice:string,signal:AbortSignal){
-  if(speechProvider==='elevenlabs')return fetch('https://api.elevenlabs.io/v1/text-to-speech/'+encodeURIComponent(voice)+'/stream?output_format=pcm_24000',{
+export async function synthesize(text:string,voice:string,signal:AbortSignal){
+  if(speechProvider==='elevenlabs'){
+    try { const response=await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+encodeURIComponent(voice)+'/stream?output_format=pcm_24000',{
     method:'POST',signal,headers:{'xi-api-key':elevenKey,'Content-Type':'application/json'},body:JSON.stringify({text,model_id:'eleven_flash_v2_5',voice_settings:{stability:0.55,similarity_boost:0.75}})
   })
+    if(response.ok||!fishKey||!process.env.FISH_AUDIO_VOICE_ID||signal.aborted)return response
+    console.warn('ElevenLabs HTTP',response.status,'– switching to Fish Audio');await response.body?.cancel()
+    }catch(error){if(signal.aborted||!fishKey||!process.env.FISH_AUDIO_VOICE_ID)throw error;console.warn('ElevenLabs unavailable – switching to Fish Audio')}
+    voice=process.env.FISH_AUDIO_VOICE_ID!.trim()
+  }
   return fetch('https://api.fish.audio/v1/tts',{method:'POST',signal,headers:{Authorization:'Bearer '+fishKey,'Content-Type':'application/json',model:process.env.FISH_AUDIO_MODEL||'s2.1-pro-free'},body:JSON.stringify({text,reference_id:voice,format:'pcm',sample_rate:24000,latency:'balanced'})})
 }
 
