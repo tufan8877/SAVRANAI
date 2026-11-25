@@ -21,7 +21,10 @@ export class AudioEngine {
       this.gain.connect(this.analyser)
       this.analyser.connect(this.context.destination)
     }
-    if(this.context.state!=='running')await this.context.resume()
+    if(this.context.state!=='running'){
+      let timer:ReturnType<typeof setTimeout>|undefined
+      try{await Promise.race([this.context.resume(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('Audioausgabe konnte nicht aktiviert werden.')),4000)})])}finally{clearTimeout(timer)}
+    }
   }
   level() {
     if(!this.analyser||!this.sample)return 0
@@ -127,7 +130,7 @@ export class AudioEngine {
           if(!started){started=true;onStart()}
         }
       } finally {await reader.cancel().catch(()=>undefined);reader.releaseLock()}
-      await last
+      await Promise.race([last,new Promise<void>(resolve=>{if(controller.signal.aborted)resolve();else controller.signal.addEventListener('abort',()=>resolve(),{once:true})})])
       if(!started&&!controller.signal.aborted)throw new Error('Fish Audio hat kein Audio geliefert.')
     } catch(error) {if(timedOut)throw new Error('Zeitlimit der Sprachausgabe erreicht.');if(!controller.signal.aborted){this.stopSpeech();throw error}}
     finally {clearTimeout(timeout);if(this.playback===controller)this.playback=undefined}
