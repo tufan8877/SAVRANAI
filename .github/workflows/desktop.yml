@@ -38,6 +38,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: installers
@@ -47,3 +48,5 @@ jobs:
         run: |
           gh release view desktop-v1 --repo "$GITHUB_REPOSITORY" || gh release create desktop-v1 --repo "$GITHUB_REPOSITORY" --title "CORE Desktop" --notes "Unsigned desktop installers."
           gh release upload desktop-v1 installers/* --clobber --repo "$GITHUB_REPOSITORY"
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          gh release edit desktop-v1 --title "CORE Desktop v$VERSION" --repo "$GITHUB_REPOSITORY"
