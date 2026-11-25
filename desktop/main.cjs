@@ -1,4 +1,5 @@
-const {app,BrowserWindow,session,shell,Tray,Menu,nativeImage}=require('electron');
+const {app,BrowserWindow,session,shell,Tray,Menu,nativeImage,ipcMain,dialog}=require('electron');
+const path=require('node:path');
 const url='https://savranai.onrender.com';
 const trusted=u=>{try{return new URL(u).origin===url}catch{return false}};
 let win,tray,quitting=false;
@@ -16,7 +17,7 @@ else{
  const ses=session.defaultSession;
  ses.setPermissionRequestHandler((wc,permission,callback,details)=>callback(trusted(details.requestingUrl||wc.getURL())&&permission==='media'&&Array.isArray(details.mediaTypes)&&details.mediaTypes.length>0&&details.mediaTypes.every(t=>t==='audio')));
  ses.setPermissionCheckHandler((wc,permission,origin,details)=>trusted(origin)&&permission==='media'&&details.mediaType==='audio');
- win=new BrowserWindow({width:1100,height:850,minWidth:360,minHeight:500,autoHideMenuBar:true,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true}});
+ win=new BrowserWindow({width:1100,height:850,minWidth:360,minHeight:500,autoHideMenuBar:true,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,preload:path.join(__dirname,'preload.cjs')}});
  win.webContents.on('will-navigate',(e,u)=>{if(!trusted(u))e.preventDefault()});
  win.webContents.on('will-redirect',(e,u)=>{if(!trusted(u))e.preventDefault()});
  win.webContents.setWindowOpenHandler(({url:u})=>{if(/^https:\/\//i.test(u))void shell.openExternal(u).catch(()=>{});return {action:'deny'}});
@@ -26,6 +27,20 @@ else{
  tray.setToolTip('INTEL AI CORE');tray.setContextMenu(menu());tray.on('click',show);
  win.on('close',e=>{if(!quitting&&tray){e.preventDefault();win.hide()}});
  app.on('activate',show);
+ ipcMain.handle('core:local',async(event,action)=>{
+ if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
+ const targets={desktop:'desktop',documents:'documents',downloads:'downloads'};
+ if(typeof action!=='string'||!['desktop','documents','downloads','file','mail','outlook'].includes(action))throw new Error('Unbekannte Aktion');
+ const labels={desktop:'Desktop öffnen',documents:'Dokumente öffnen',downloads:'Downloads öffnen',file:'Eine lokale Datei auswählen und öffnen',mail:'Neue E-Mail im Standard-Mailprogramm öffnen',outlook:'Outlook im Browser öffnen'};
+ const confirmation=await dialog.showMessageBox(win,{type:'question',buttons:['Abbrechen','Erlauben'],defaultId:0,cancelId:0,title:'CORE – lokaler Zugriff',message:labels[action]+'?'});
+ if(confirmation.response!==1)return 'Aktion abgebrochen.';
+ if(action==='mail'||action==='outlook'){await shell.openExternal(action==='mail'?'mailto:':'https://outlook.office.com/mail/');return 'Mailprogramm beziehungsweise Outlook-Webseite geöffnet. Keine E-Mail versendet.'}
+ let target;
+ if(action==='file'){const selected=await dialog.showOpenDialog(win,{properties:['openFile']});if(selected.canceled)return 'Keine Datei ausgewählt.';target=selected.filePaths[0];if(!/\.(pdf|txt|docx|xlsx|png|jpg|jpeg|csv)$/i.test(target))return 'Dieser Dateityp ist nicht freigegeben.'}
+ else target=app.getPath(targets[action]);
+ const error=await shell.openPath(target);if(error)throw new Error('Öffnen fehlgeschlagen.');
+ return 'Die ausgewählte Datei oder der Ordner wurde zum Öffnen übergeben.';
+ });
  win.loadURL(url+'/?app=1');
  }).catch(error=>{console.error('CORE startup failed',error);app.quit()});
 }
