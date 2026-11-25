@@ -40,11 +40,11 @@ async function preferGemini(signal:AbortSignal,primary:()=>Promise<Response>,fal
 export const provider: AIProvider = {
   chat(messages, signal) {
     return preferGemini(signal,async()=>{
-      const instruction=messages.filter(m=>m.role==='system').map(m=>m.content).join('\\n').replaceAll('browser_search','Google Search');
+      const instruction=messages.filter(m=>m.role==='system').map(m=>m.content).join('\n').replaceAll('browser_search','Google Search');
       const contents=messages.filter(m=>m.role!=='system').map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
-      const search=/\\b(aktuell\\w*|heute|morgen|recherchier\\w*|websuche|google|nachschauen|neueste\\w*|wetter|kurs|search online)\\b/i.test(messages.at(-1)?.content||'');
+      const search=/\b(aktuell\w*|heute|morgen|recherchier\w*|websuche|google|nachschauen|neueste\w*|wetter|kurs|search online)\b/i.test(messages.at(-1)?.content||'');
       const answer=await geminiAnswer(contents,instruction,signal,search);
-      return new Response('data: '+JSON.stringify({choices:[{delta:{content:answer}}]})+'\\n\\ndata: [DONE]\\n\\n',{headers:{'Content-Type':'text/event-stream'}})
+      return new Response('data: '+JSON.stringify({choices:[{delta:{content:answer}}]})+'\n\ndata: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}})
     },async()=>{
     const enabled=process.env.GROQ_WEB_SEARCH!=='false' && /^openai\/gpt-oss-(20b|120b)$/.test(groqModel)
     const web=enabled?{tools:[{type:'browser_search'}],tool_choice:'auto',reasoning_effort:'low'}:{}
