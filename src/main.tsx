@@ -22,7 +22,7 @@ type RecognitionResult={isFinal:boolean;0:{transcript:string}}
 type Recognition= {
   lang:string;continuous:boolean;interimResults:boolean;
   onresult:((e:{resultIndex:number;results:ArrayLike<RecognitionResult>})=>void)|null;
-  onend:(()=>void)|null;onerror:((e:{error:string})=>void)|null;
+  onstart:(()=>void)|null;onend:(()=>void)|null;onerror:((e:{error:string})=>void)|null;
   start():void;abort():void
 }
 type InstallEvent=Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>}
@@ -68,6 +68,7 @@ function Assistant(){
   const [diagnosing,setDiagnosing]=useState(false)
   const [handsFree,setHandsFree]=useState(false)
   const [awaitingCommand,setAwaitingCommand]=useState(false)
+  const [recognitionReady,setRecognitionReady]=useState(false)
   const [voicePrompt,setVoicePrompt]=useState(true)
   const recognition=useRef<Recognition|null>(null)
   const followupUntil=useRef(0)
@@ -283,7 +284,7 @@ function Assistant(){
   }
   latestVoice.current=(text)=>{
     const command=text.trim()
-    const wake=command.match(/^(?:hey|he|hei|hi|okay|ok)[\s,!.:-]+(?:core|kor|kore|chor|korr|kohr|kora)\b[\s,!.?:-]*/i)
+    const wake=command.match(/^(?:(?:hey|he|hei|hi|okay|ok)[\s,!.:-]*)?(?:core|kor|kore|chor|korr|kohr|kora|koreh)\b[\s,!.?:-]*/i)
     if(!wake&&Date.now()>followupUntil.current)return false
     followupUntil.current=0
     const request=wake?command.slice(wake[0].length).trim():command
@@ -302,7 +303,9 @@ function Assistant(){
     const r=new Constructor()
     recognition.current=r
     r.lang=profile.language==='en'?'en-US':'de-DE'
-    r.continuous=true;r.interimResults=false
+    r.continuous=false;r.interimResults=false
+    setRecognitionReady(false)
+    r.onstart=()=>{if(active)setRecognitionReady(true)}
     let active=true, timer:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
     const retry=(delay=180)=>{clearTimeout(timer);if(active&&!document.hidden&&!handled)timer=setTimeout(start,delay)}
     const start=()=>{if(active&&!document.hidden&&!handled){try{r.start()}catch{retry(500)}}}
@@ -321,18 +324,19 @@ function Assistant(){
         setHandsFree(false);setAwaitingCommand(false);return
       }
       failures++
+      if(e.error!=='no-speech'&&e.error!=='aborted'){setNotice('Spracherkennung: '+e.error+'. Nutze bei Bedarf die Mikrofontaste.');if(failures>=3){setHandsFree(false);return}}
       retry(Math.min(3000,500*failures))
     }
-    r.onend=()=>retry(failures?Math.min(3000,350*failures):180)
+    r.onend=()=>{setRecognitionReady(false);retry(failures?Math.min(3000,350*failures):180)}
     const visibility=()=>{if(document.hidden){clearTimeout(timer);r.abort()}else retry()}
     document.addEventListener('visibilitychange',visibility)
     retry(100)
-    return ()=>{active=false;clearTimeout(timer);r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
+    return ()=>{active=false;clearTimeout(timer);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
   useEffect(()=>{if(!awaitingCommand)return;const timer=setTimeout(()=>{followupUntil.current=0;setAwaitingCommand(false)},15000);return ()=>clearTimeout(timer)},[awaitingCommand])
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
-    if(busy||!permitted('chat')||!permitted('speech'))return
+    if(busy||!permitted('chat'))return
     const browser=window as unknown as {SpeechRecognition?:unknown;webkitSpeechRecognition?:unknown}
     if(!browser.SpeechRecognition&&!browser.webkitSpeechRecognition){setNotice('Automatische Spracherkennung wird in diesem Browser nicht unterstützt.');return}
     try{await engine.current.unlock();setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
@@ -431,7 +435,7 @@ function Assistant(){
     <main className="command">
       <div className="stage">
         <button type="button" aria-label={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} title={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
-        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?(awaitingCommand?'Ich höre zu – stelle deine Frage':'Warte auf Hey CORE'):labels[state]}</div></div>
+        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?(recognitionReady?(awaitingCommand?'Ich höre zu – stelle deine Frage':'Warte auf Hey CORE'):'Mikrofon wird verbunden …'):labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
