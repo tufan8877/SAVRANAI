@@ -1,6 +1,9 @@
 const {app,BrowserWindow,session,shell,Tray,Menu,nativeImage,ipcMain,dialog,desktopCapturer,screen}=require('electron');
 const path=require('node:path');
 const fs=require('node:fs/promises');
+const {execFile}=require('node:child_process');
+const {promisify}=require('node:util');
+const run=promisify(execFile);
 let localBusy=false;
 const url='https://savranai.onrender.com';
 const trusted=u=>{try{return new URL(u).origin===url}catch{return false}};
@@ -74,6 +77,43 @@ else{
  if(jpeg.length>4*1024*1024)throw new Error('Screenshot zu groß.');
  return jpeg.toString('base64');
  }finally{show()}
+ }finally{localBusy=false}
+ });
+ ipcMain.handle('core:control',async(event,action)=>{
+ if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
+ if(process.platform!=='win32')return 'CORE Control ist derzeit nur für Windows verfügbar.';
+ if(localBusy)return 'Eine lokale Aktion läuft bereits.';
+ const keys={escape:'{ESC}',tab:'{TAB}',enter:'{ENTER}',up:'{UP}',down:'{DOWN}',left:'{LEFT}',right:'{RIGHT}',pageup:'{PGUP}',pagedown:'{PGDN}'};
+ const apps={notepad:'notepad.exe',calculator:'calc.exe',explorer:'explorer.exe'};
+ if(!action||typeof action!=='object')throw new Error('Ungültige Aktion');
+ const kind=action.kind;
+ if(kind==='key'&&!Object.hasOwn(keys,action.key))throw new Error('Taste nicht freigegeben');
+ if(kind==='app'&&!Object.hasOwn(apps,action.app))throw new Error('Programm nicht freigegeben');
+ if(kind==='move'||kind==='click'){
+ const b=screen.getPrimaryDisplay().bounds;
+ if(!Number.isInteger(action.x)||!Number.isInteger(action.y)||action.x<0||action.y<0||action.x>=b.width||action.y>=b.height)throw new Error('Koordinaten außerhalb des Hauptbildschirms');
+ }
+ if(!['key','app','move','click'].includes(kind))throw new Error('Aktion nicht freigegeben');
+ const label=kind==='key'?'Taste '+action.key:kind==='app'?'Programm '+action.app:kind==='move'?'Maus bewegen zu '+action.x+', '+action.y:'Einmal klicken bei '+action.x+', '+action.y;
+ localBusy=true;
+ try{
+ const consent=await dialog.showMessageBox(win,{type:'warning',title:'CORE Control',message:label+'?',detail:'CORE wird ausgeblendet. Bei Tastaturaktionen wähle innerhalb von 3 Sekunden das gewünschte Fenster. Prüfe vor einem Klick die Zielposition.',buttons:['Abbrechen','Ausführen'],defaultId:0,cancelId:0});
+ if(consent.response!==1)return 'Aktion abgebrochen.';
+ win.hide();
+ try{
+ if(kind==='app'){await run(apps[action.app],[],{timeout:5000,windowsHide:true}).catch(e=>{if(!e.killed)throw e});return 'Programmstart angefordert.'}
+ await new Promise(resolve=>setTimeout(resolve,3000));
+ let script;
+ if(kind==='key')script="Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('"+keys[action.key]+"')";
+ else{
+ const b=screen.getPrimaryDisplay().bounds;
+ const p=screen.dipToScreenPoint({x:b.x+action.x,y:b.y+action.y});
+ script="Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point("+p.x+","+p.y+");";
+ if(kind==='click')script+=" Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class CoreMouse { [DllImport(\"user32.dll\")] public static extern void mouse_event(uint f,uint x,uint y,uint d,System.UIntPtr e); }'; [CoreMouse]::mouse_event(2,0,0,0,[UIntPtr]::Zero); [CoreMouse]::mouse_event(4,0,0,0,[UIntPtr]::Zero);";
+ }
+ await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{timeout:10000,windowsHide:true});
+ return 'Eingabe ausgeführt. Bitte Ergebnis im Zielprogramm prüfen.';
+ }finally{if(!win.isDestroyed())win.showInactive()}
  }finally{localBusy=false}
  });
  win.loadURL(url+'/?app=1');
