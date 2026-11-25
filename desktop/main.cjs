@@ -162,6 +162,27 @@ else{
  return {text:'Datei gespeichert: '+path.basename(pick.filePath)};
  }finally{localBusy=false}
  });
+ ipcMain.handle('core:mail',async(event,action)=>{
+ if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
+ if(process.platform!=='win32')throw new Error('CORE Mail benötigt klassisches Outlook unter Windows.');
+ if(localBusy)throw new Error('Eine lokale Aktion läuft bereits.');
+ if(!action||!['read','draft'].includes(action.kind))throw new Error('Unbekannte Mailaktion');
+ localBusy=true;
+ try{
+ if(action.kind==='draft'){
+ if(typeof action.text!=='string'||action.text.length>10000)throw new Error('Ungültiger Entwurf');
+ const consent=await dialog.showMessageBox(win,{title:'CORE Mail',message:'Antwortentwurf für die in Outlook ausgewählte E-Mail öffnen?',detail:action.text.slice(0,1000),buttons:['Abbrechen','Entwurf öffnen'],defaultId:0,cancelId:0});
+ if(consent.response!==1)return null;
+ }else{
+ const consent=await dialog.showMessageBox(win,{title:'CORE Mail',message:'Die in klassischem Outlook ausgewählte E-Mail lesen?',detail:'Der Inhalt wird in CORE angezeigt. Bei einer KI-Zusammenfassung wird er an den CORE-Server und Groq übertragen.',buttons:['Abbrechen','Erlauben'],defaultId:0,cancelId:0});
+ if(consent.response!==1)return null;
+ }
+ const base="$ErrorActionPreference='Stop'; $o=New-Object -ComObject Outlook.Application; $e=$o.ActiveExplorer(); if($null -eq $e -or $e.Selection.Count -ne 1){throw 'Bitte genau eine E-Mail in Outlook auswählen.'}; $m=$e.Selection.Item(1); if($m.Class -ne 43){throw 'Keine E-Mail ausgewählt.'}; ";
+ const script=action.kind==='read'?base+"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $b=[string]$m.Body; if($b.Length -gt 4000){$b=$b.Substring(0,4000)}; @{subject=[string]$m.Subject;sender=[string]$m.SenderName;body=$b}|ConvertTo-Json -Compress":base+"$r=$m.Reply(); $r.Body=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+Buffer.from(action.text,'utf8').toString('base64')+"'))+[Environment]::NewLine+[Environment]::NewLine+$r.Body; $r.Display();";
+ const result=await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{timeout:20000,windowsHide:true,maxBuffer:65536});
+ return action.kind==='read'?JSON.parse(result.stdout):{body:'Antwortentwurf in Outlook geöffnet. Bitte Empfänger und Inhalt prüfen und selbst senden.'};
+ }finally{localBusy=false}
+ });
  win.loadURL(url+'/?app=1');
  }).catch(error=>{console.error('CORE startup failed',error);app.quit()});
 }
