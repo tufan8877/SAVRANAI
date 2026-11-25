@@ -311,12 +311,12 @@ function Assistant(){
     const r=new Constructor()
     recognition.current=r
     r.lang=profile.language==='en'?'en-US':'de-DE'
-    r.continuous=!/iPhone|iPad|iPod/i.test(navigator.userAgent);r.interimResults=false
+    r.continuous=false;r.interimResults=false
     setRecognitionReady(false)
-    r.onstart=()=>{if(active)setRecognitionReady(true)}
-    let active=true, timer:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
+    r.onstart=()=>{if(active){clearTimeout(watchdog);setRecognitionReady(true)}}
+    let active=true, timer:ReturnType<typeof setTimeout>|undefined, watchdog:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
     const retry=(delay=180)=>{clearTimeout(timer);if(active&&!document.hidden&&!handled)timer=setTimeout(start,delay)}
-    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start()}catch{retry(500)}}}
+    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start();clearTimeout(watchdog);watchdog=setTimeout(()=>{if(active&&!handled){try{r.abort()}catch{};retry(800)}},8000)}catch{retry(800)}}}
     r.onresult=e=>{
       failures=0
       for(let i=e.resultIndex;i<e.results.length;i++){
@@ -327,20 +327,20 @@ function Assistant(){
     }
     r.onerror=e=>{
       if(!active||handled)return
-      if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){
+      if(['not-allowed','service-not-allowed'].includes(e.error)){
         setNotice('Mikrofonzugriff nicht verfügbar: '+e.error)
         setHandsFree(false);setAwaitingCommand(false);return
       }
       if(e.error==='no-speech'||e.error==='aborted'){failures=0;return}
       failures++
-      if(e.error!=='no-speech'&&e.error!=='aborted'){setNotice('Spracherkennung: '+e.error+'. Nutze bei Bedarf die Mikrofontaste.');if(failures>=3){setHandsFree(false);return}}
+      if(e.error!=='no-speech'&&e.error!=='aborted'){setNotice('Spracherkennung: '+e.error+'. Nutze bei Bedarf die Mikrofontaste.');}
       retry(Math.min(3000,500*failures))
     }
-    r.onend=()=>{setRecognitionReady(false);retry(failures?Math.min(3000,350*failures):180)}
+    r.onend=()=>{clearTimeout(watchdog);setRecognitionReady(false);retry(failures?Math.min(5000,500*failures):350)}
     const visibility=()=>{if(document.hidden){clearTimeout(timer);r.abort()}else retry()}
     document.addEventListener('visibilitychange',visibility)
-    retry(100)
-    return ()=>{active=false;clearTimeout(timer);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
+    retry(400)
+    return ()=>{active=false;clearTimeout(timer);clearTimeout(watchdog);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
   useEffect(()=>{if(!awaitingCommand)return;const timer=setTimeout(()=>{followupUntil.current=0;setAwaitingCommand(false)},30000);return ()=>clearTimeout(timer)},[awaitingCommand])
   async function toggleAssistant(){
@@ -464,7 +464,7 @@ function Assistant(){
       </div>
     </main>
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>intelaicore.org</span><button className="install" onClick={()=>setInstallHelp(v=>!v)}><Download size={13}/> Installieren</button></footer>
-    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und beginne jede Frage mit „Hey CORE“. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{setVoicePrompt(false);void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
+    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und starte das Gespräch mit „Hey CORE“. Nach einer Antwort kannst du direkt weiterreden. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{setVoicePrompt(false);void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
     {installHelp&&<div className="install-help" role="status"><strong>CORE installieren</strong><div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-Windows-x64.exe" style={{color:"#efae5d"}}>Windows (64-Bit) herunterladen</a><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-macOS-arm64.dmg" style={{color:"#efae5d"}}>macOS (Apple Silicon) herunterladen</a><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-macOS-x64.dmg" style={{color:"#efae5d"}}>macOS (Intel) herunterladen</a>{install&&<button className="action-btn" onClick={async()=>{await install.prompt();await install.userChoice;setInstall(undefined)}}>Webapp installieren</button>}<span>iPhone / iPad: Safari → Teilen → Zum Home-Bildschirm.</span><span>Android: Browsermenü → App installieren.</span><button className="action-btn" onClick={()=>setInstallHelp(false)}>Schließen</button></div></div>}
     {businessOpen&&<SidePanel title="Business-Arbeitsbereich" close={()=>setBusinessOpen(false)}><div className="fields"><p className="muted">CORE für Unternehmen. Chat und Entwürfe sind verfügbar. Die folgenden Verwaltungsmodule befinden sich in Planung.</p>{businessModules.map(({icon:Icon,label,description})=><div key={label} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid rgba(239,174,93,.2)"}}><Icon size={20}/><div style={{flex:1}}><strong>{label}</strong><p className="muted">{description}</p></div><small>Geplant</small></div>)}</div></SidePanel>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
