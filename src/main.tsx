@@ -188,6 +188,7 @@ function Assistant(){
   }
   function reset(){
     stopAssistant()
+    if('speechSynthesis' in window)window.speechSynthesis.cancel()
     sequence.current++;abort.current?.abort();engine.current.stopSpeech();engine.current.finishRecording(false)
     setCurrent(undefined);setMessages([]);setInput('');setNotice('');setPhase('STANDBY')
   }
@@ -488,49 +489,61 @@ function Assistant(){
   }
   useEffect(()=>{
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
-    const browser=window as unknown as {SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition}
-    const Constructor=browser.SpeechRecognition||browser.webkitSpeechRecognition
-    if(!Constructor){setHandsFree(false);setNotice('Dieser Browser unterstützt keine automatische Spracherkennung.');return}
-    const r=new Constructor()
-    recognition.current=r
-    r.lang=profile.language==='en'?'en-US':'de-DE'
-    r.continuous=false;r.interimResults=false
-    setRecognitionReady(false)
-    r.onstart=()=>{if(active){clearTimeout(watchdog);setRecognitionReady(true)}}
-    let active=true, timer:ReturnType<typeof setTimeout>|undefined, watchdog:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
-    const retry=(delay=180)=>{clearTimeout(timer);if(active&&!document.hidden&&!handled)timer=setTimeout(start,delay)}
-    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start();clearTimeout(watchdog);watchdog=setTimeout(()=>{if(active&&!handled){try{r.abort()}catch{};retry(800)}},8000)}catch{retry(800)}}}
-    r.onresult=e=>{
-      failures=0
-      for(let i=e.resultIndex;i<e.results.length;i++){
-        if(e.results[i].isFinal&&!handled&&e.results[i][0].transcript.trim()){
-          if(latestVoice.current(e.results[i][0].transcript.trim())){handled=true;clearTimeout(timer);r.abort();break}
+    let active=true,stream:MediaStream|undefined,context:AudioContext|undefined,recorder:MediaRecorder|undefined,frame=0
+    const controller=new AbortController()
+    let chunks:Blob[]=[],started=0,lastVoice=0,processing=false
+    const cleanup=()=>{cancelAnimationFrame(frame);if(recorder?.state==='recording'){recorder.onstop=null;recorder.stop()}stream?.getTracks().forEach(t=>t.stop());if(context&&context.state!=='closed')void context.close().catch(()=>undefined)}
+    const begin=async()=>{
+      try{
+        stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
+        if(!active){cleanup();return}
+        context=new AudioContext()
+        await context.resume()
+        if(!active){cleanup();return}
+        const analyser=context.createAnalyser();analyser.fftSize=1024
+        context.createMediaStreamSource(stream).connect(analyser)
+        const samples=new Float32Array(1024)
+        const mime=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'].find(t=>MediaRecorder.isTypeSupported(t))
+        recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined)
+        recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}
+        recorder.onstop=async()=>{
+          if(!active)return
+          const blob=new Blob(chunks,{type:recorder!.mimeType})
+          try{
+            if(blob.size){
+              const response=await api('transcribe',session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
+              const result=await response.json()
+              if(active&&typeof result.text==='string'&&result.text.trim()&&latestVoice.current(result.text.trim())){cleanup();return}
+            }
+          }catch(error){if(active)setNotice('Spracherkennung fehlgeschlagen. CORE versucht es erneut.')}
+          finally{processing=false;started=0;lastVoice=0}
         }
-      }
+        setRecognitionReady(true)
+        const tick=()=>{
+          if(!active)return
+          analyser.getFloatTimeDomainData(samples)
+          let sum=0;for(const v of samples)sum+=v*v
+          const loud=Math.sqrt(sum/samples.length)>.025
+          const now=performance.now()
+          if(!processing&&recorder!.state==='inactive'&&loud){chunks=[];started=lastVoice=now;recorder!.start(200)}
+          if(recorder!.state==='recording'){
+            if(loud)lastVoice=now
+            if(now-lastVoice>850||now-started>15000){processing=true;recorder!.stop()}
+          }
+          frame=requestAnimationFrame(tick)
+        }
+        tick()
+      }catch(error){if(active){setNotice('Mikrofon konnte nicht aktiviert werden: '+(error instanceof Error?error.message:String(error)));setHandsFree(false)}cleanup()}
     }
-    r.onerror=e=>{
-      if(!active||handled)return
-      if(['not-allowed','service-not-allowed'].includes(e.error)){
-        setNotice('Mikrofonzugriff nicht verfügbar: '+e.error)
-        setHandsFree(false);setAwaitingCommand(false);return
-      }
-      if(e.error==='no-speech'||e.error==='aborted'){failures=0;return}
-      failures++
-      if(e.error!=='no-speech'&&e.error!=='aborted'){setNotice('Spracherkennung: '+e.error+'. Nutze bei Bedarf die Mikrofontaste.');}
-      retry(Math.min(3000,500*failures))
-    }
-    r.onend=()=>{clearTimeout(watchdog);setRecognitionReady(false);retry(failures?Math.min(5000,500*failures):350)}
-    const visibility=()=>{if(document.hidden){clearTimeout(timer);r.abort()}else retry()}
-    document.addEventListener('visibilitychange',visibility)
-    retry(400)
-    return ()=>{active=false;clearTimeout(timer);clearTimeout(watchdog);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
-  },[handsFree,phase,online,profile.language,uid])
+    void begin()
+    return ()=>{active=false;controller.abort();cleanup();setRecognitionReady(false)}
+  },[handsFree,phase,online,profile.language,uid,session])
   useEffect(()=>{if(!awaitingCommand)return;const timer=setTimeout(()=>{followupUntil.current=0;setAwaitingCommand(false)},30000);return ()=>clearTimeout(timer)},[awaitingCommand])
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
     if(busy||!permitted('chat'))return
-    const browser=window as unknown as {SpeechRecognition?:unknown;webkitSpeechRecognition?:unknown}
-    if(!browser.SpeechRecognition&&!browser.webkitSpeechRecognition){setNotice('Automatische Spracherkennung wird in diesem Browser nicht unterstützt.');return}
+    if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined'){setNotice('Mikrofonaufnahme wird nicht unterstützt.');return}
+    if(!window.confirm('Sprachmodus aktivieren? Erkannte Sprachabschnitte werden auch vor dem Aktivierungswort an CORE und Groq zur Transkription übertragen.'))return
     try{await engine.current.unlock().catch(()=>undefined);setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
   }
   async function microphone(){
