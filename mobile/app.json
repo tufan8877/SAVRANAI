@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "INTEL AI CORE",
+    "slug": "intel-ai-core",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "org.intelaicore.mobile",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "org.intelaicore.mobile"
+    },
+    "plugins": [
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "CORE benötigt das Mikrofon für Sprachbefehle.",
+          "speechRecognitionPermission": "CORE benötigt die Spracherkennung für Sprachbefehle."
+        }
+      ],
+      "expo-audio"
+    ]
+  }
+}
