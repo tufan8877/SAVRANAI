@@ -46,7 +46,7 @@ const Orb=memo(function Orb({mode,level,reduced}:{mode:CoreState;level:React.Mut
     <div className="flare"/>
   </div>
 })
-function App(){
+function Assistant(){
   const [session,setSession]=useState<Session|null>(null)
   const [recovery,setRecovery]=useState(false)
   const [config,setConfig]=useState<Config>()
@@ -460,5 +460,19 @@ function App(){
     </SidePanel>}
   </div>
 }
+function App(){
+ const [assistant,setAssistant]=useState(()=>new URLSearchParams(location.search).get('app')==='1'||matchMedia('(display-mode: standalone)').matches)
+ if(assistant)return <Assistant/>
+ return <div style={{minHeight:'100dvh',overflowY:'auto',background:'#080705',color:'#f1d2a5',fontFamily:'system-ui,sans-serif',position:'fixed',inset:0}}>
+ <header style={{maxWidth:1120,margin:'auto',padding:'24px clamp(20px,5vw,64px)',display:'flex',justifyContent:'space-between',alignItems:'center',gap:16,flexWrap:'wrap'}}><strong style={{letterSpacing:3}}>INTEL AI CORE</strong><button className="action-btn" onClick={()=>setAssistant(true)}>Webversion öffnen</button></header>
+ <main style={{maxWidth:1120,margin:'auto',padding:'clamp(28px,7vw,90px) clamp(20px,5vw,64px)'}}>
+ <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,320px),1fr))',alignItems:'center',gap:24}}>
+ <section><p style={{letterSpacing:3,fontSize:12}}>KI FÜR DEINEN ARBEITSALLTAG</p><h1 style={{fontSize:'clamp(36px,6vw,72px)',lineHeight:1.08,margin:'20px 0'}}>Dein digitaler Mitarbeiter. Direkt auf deinem Computer.</h1><p style={{lineHeight:1.7,color:'#c8b9a5'}}>CORE unterstützt dich per Sprache und Text bei geschäftlichen E-Mails, Rechnungsentwürfen, Recherche und Aufgabenplanung.</p><a href="https://github.com/tufan8877/SAVRANAI/releases/tag/desktop-v1" style={{display:'inline-flex',alignItems:'center',gap:10,background:'#efae5d',color:'#171009',padding:'14px 20px',borderRadius:8,fontWeight:700,textDecoration:'none',marginTop:20}}><Download size={20}/> Desktop-Downloads</a><p style={{fontSize:13,color:'#c8b9a5'}}>Windows & macOS · Internetverbindung erforderlich · Vorschauversion</p></section>
+ <div aria-hidden="true" style={{display:'grid',placeItems:'center'}}><LandingOrb/></div></div>
+ <section style={{marginTop:56}}><h2>Dein Arbeitsalltag mit CORE</h2><div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:14}}>{[{icon:Mail,label:'Geschäftliche E-Mails',desc:'Professionelle Nachrichten vorbereiten.'},{icon:Receipt,label:'Rechnungsentwürfe',desc:'Angaben strukturieren und Entwürfe vorbereiten.'},{icon:Workflow,label:'Aufgaben & Recherche',desc:'Arbeit planen und Informationen recherchieren.'}].map(({icon:Icon,label,desc})=><article key={label} style={{border:'1px solid #493521',borderRadius:12,padding:22,background:'#15110d'}}><Icon size={25}/><h3>{label}</h3><p style={{color:'#c8b9a5'}}>{desc}</p></article>)}</div></section>
+ <section style={{marginTop:40,lineHeight:1.7}}><h2>In Entwicklung</h2><p>Lokaler Dateizugriff, automatische Rechnungsverwaltung, E-Mail-Versand und Kalenderintegration sind noch nicht verfügbar. Desktop-Installationsdateien sind nach erfolgreichem Build auf der Downloadseite verfügbar und derzeit nicht signiert.</p></section>
+ </main><div style={{padding:24,textAlign:'center',color:'#c8b9a5'}}>INTEL AI CORE · intelaicore.org</div></div>
+}
+function LandingOrb(){const level=useRef(0);return <Orb mode="STANDBY" level={level} reduced={true}/>}
 createRoot(document.getElementById('root')!).render(<App/>)
 if(import.meta.env.PROD&&'serviceWorker' in navigator)window.addEventListener('load',()=>void navigator.serviceWorker.register('/sw.js').catch(()=>undefined))
