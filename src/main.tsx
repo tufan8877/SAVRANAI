@@ -246,7 +246,21 @@ function Assistant(){
   }
   async function send(text=input,existingTicket?:number,forceSpeech=false){
     const clean=text.trim()
-    if(!clean||!permitted('chat'))return
+    if(!clean)return
+    const local=(window as unknown as {coreDesktop?:{local:(action:string)=>Promise<string>}}).coreDesktop
+    const match=clean.match(/^(?:öffne|starte|zeige)\s+(?:(?:mir|meine[n]?|den|die|das|eine[n]?)\s+)*(desktop|dokumente|dokumentenordner|downloads|downloadordner|datei|outlook|mailprogramm|e-mail-programm)[.!]?$/i)
+    if(local&&match){
+      const targets:Record<string,string>={desktop:'desktop',dokumente:'documents',dokumentenordner:'documents',downloads:'downloads',downloadordner:'downloads',datei:'file',outlook:'outlook',mailprogramm:'mail','e-mail-programm':'mail'}
+      const ticket=existingTicket??++sequence.current
+      setPhase('PROCESSING');setInput('')
+      let answer:string
+      try{answer=await local.local(targets[match[1].toLowerCase()])}catch{answer='CORE konnte die lokale Aktion nicht ausführen.'}
+      if(ticket!==sequence.current)return
+      setMessages(previous=>[...previous,{role:'user',content:clean},{role:'assistant',content:answer}])
+      try{if(forceSpeech||handsFree||profile.speech)await speak(answer,ticket)}finally{if(ticket===sequence.current){if(handsFree){followupUntil.current=Date.now()+30000;setAwaitingCommand(true)}setPhase('STANDBY')}}
+      return
+    }
+    if(!permitted('chat'))return
     const ticket=existingTicket??++sequence.current
     engine.current.stopSpeech()
     if((forceSpeech||profile.speech)&&config?.speech)void engine.current.unlock().catch(()=>undefined)
