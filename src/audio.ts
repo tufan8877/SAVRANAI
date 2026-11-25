@@ -26,6 +26,13 @@ export class AudioEngine {
       try{await Promise.race([this.context.resume(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('Audioausgabe konnte nicht aktiviert werden.')),4000)})])}finally{clearTimeout(timer)}
     }
   }
+  async microphoneAnalyser(stream:MediaStream){
+    await this.unlock()
+    const input=this.context!.createMediaStreamSource(stream)
+    const analyser=this.context!.createAnalyser();analyser.fftSize=1024
+    input.connect(analyser)
+    return {analyser,disconnect:()=>input.disconnect()}
+  }
   level() {
     if(!this.analyser||!this.sample)return 0
     this.analyser.getFloatTimeDomainData(this.sample)
