@@ -9,7 +9,7 @@ import {pipeline} from 'node:stream/promises'
 import {resolve} from 'node:path'
 import {pathToFileURL} from 'node:url'
 import {z} from 'zod'
-import {analyzePhoto, groqModel, speechKey, speechProvider, provider, synthesize, systemPrompt, voices, type Message} from './providers.js'
+import {analyzePhoto, aiModel, geminiEnabled, speechKey, speechProvider, provider, synthesize, systemPrompt, voices, type Message} from './providers.js'
 import {attachmentFormat, audioFormat, audioLimit, fileLimit} from './media.js'
 import {integrationCatalog} from './integrations.js'
 
@@ -24,7 +24,7 @@ const authConfigured = Boolean(url && key)
 const supabaseOrigin = url ? new URL(url).origin : ''
 const appOrigin = new URL(process.env.APP_URL || 'https://savran.ai').origin
 const origins = new Set([appOrigin, ...(process.env.RENDER_EXTERNAL_URL ? [new URL(process.env.RENDER_EXTERNAL_URL).origin] : []), ...(!production ? ['http://localhost:5173','http://127.0.0.1:5173'] : [])])
-const chatReady = Boolean(process.env.GROQ_API_KEY)
+const chatReady = Boolean(geminiEnabled || process.env.GROQ_API_KEY)
 const speechReady = Boolean(speechKey && voices.length)
 const accountDeletion = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
 function error(res: Response, status: number, code: string, message: string) {
@@ -50,7 +50,7 @@ app.use('/api',(req,res,next) => {
 app.use('/api',cors({origin:(origin,done)=>done(null,Boolean(origin && origins.has(origin))),methods:['GET','POST','DELETE'],allowedHeaders:['Authorization','Content-Type']}))
 app.use('/api',rateLimit({windowMs:60_000,limit:100,standardHeaders:'draft-8',legacyHeaders:false,handler:(_req,res)=>error(res,429,'rate_limit','Zu viele Anfragen. Bitte warte einen Moment.')}))
 app.get('/api/health',(_req,res)=>res.json({ok:true}))
-app.get('/api/config',(_req,res)=>res.json({guest,auth:!guest && authConfigured,chat:chatReady,speech:speechReady,accountDeletion:!guest && accountDeletion,model:groqModel,voices:speechReady?voices:[],integrations:integrationCatalog}))
+app.get('/api/config',(_req,res)=>res.json({guest,auth:!guest && authConfigured,chat:chatReady,speech:speechReady,accountDeletion:!guest && accountDeletion,model:aiModel,voices:speechReady?voices:[],integrations:integrationCatalog}))
 app.use('/api',async (req,res,next) => {
   if (guest) return next()
   if (!url || !key) return error(res,503,'supabase_config','Supabase ist noch nicht konfiguriert.')
@@ -87,7 +87,7 @@ function systemMessage(language?:string): Message {
   return {role:'system',content:systemPrompt + preference}
 }
 app.post('/api/chat',async (req,res) => {
-  if (!chatReady) return error(res,503,'groq_config','Der Groq API-Key muss auf dem Server konfiguriert werden.')
+  if (!chatReady) return error(res,503,'ai_config','Gemini oder Groq muss auf dem Server konfiguriert werden.')
   const input = chatInput.safeParse(req.body)
   if (!input.success) return error(res,400,'input','Die Nachricht ist leer oder zu lang.')
   const requester = guest ? ipKeyGenerator(req.ip || 'unknown') : res.locals.userId as string
@@ -149,7 +149,7 @@ async function streamAnswer(messages:Message[],res:Response,save?: (answer:strin
   const response = await provider.chat(messages,signalFor(res))
   if (!response.ok || !response.body) {
     await response.body?.cancel()
-    return upstreamError(res,response.status,'Groq')
+    return upstreamError(res,response.status,'KI-Anbieter')
   }
   res.type('application/x-ndjson').set('X-Accel-Buffering','no')
   res.flushHeaders()
@@ -180,7 +180,7 @@ async function streamAnswer(messages:Message[],res:Response,save?: (answer:strin
   }
 }
 app.post('/api/transcribe',express.raw({type:'application/octet-stream',limit:audioLimit}),async (req,res) => {
-  if (!chatReady) return error(res,503,'groq_config','Der Groq API-Key muss auf dem Server konfiguriert werden.')
+  if (!process.env.GROQ_API_KEY) return error(res,503,'groq_config','Der Groq API-Key muss auf dem Server konfiguriert werden.')
   const audio = Buffer.isBuffer(req.body) && await audioFormat(req.body)
   if (!audio) return error(res,415,'audio_format','Die Aufnahme hat ein ungültiges oder nicht unterstütztes Audioformat.')
   const response = await provider.transcribe(new Blob([new Uint8Array(req.body)],{type:audio.mime}),audio.extension,signalFor(res,45_000),req.query.language==='en'?'en':'de')
@@ -200,12 +200,12 @@ app.post('/api/speech',async (req,res) => {
   await pipeline(Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),res)
 })
 app.post('/api/photo',express.raw({type:'application/octet-stream',limit:'4mb'}),async(req,res)=>{
-  if(!chatReady)return error(res,503,'groq_config','Groq ist nicht konfiguriert.')
+  if(!chatReady)return error(res,503,'ai_config','Kein KI-Anbieter konfiguriert.')
   const mime=typeof req.query.mime==='string'?req.query.mime:''
   if(!['image/jpeg','image/png','image/webp'].includes(mime)||!Buffer.isBuffer(req.body)||!await attachmentFormat(req.body,mime))return error(res,415,'file_format','Ungültiges Bild.')
   const question=typeof req.query.question==='string'?req.query.question.slice(0,2000):'Beschreibe und analysiere dieses Foto auf Deutsch.'
   const response=await analyzePhoto(req.body,mime,question,signalFor(res))
-  if(!response.ok){const detail=await response.json().catch(()=>null);console.warn('Vision failure',response.status,detail?.error?.code,detail?.error?.type);return upstreamError(res,response.status,'Groq')}
+  if(!response.ok){const detail=await response.json().catch(()=>null);console.warn('Vision failure',response.status,detail?.error?.code,detail?.error?.type);return upstreamError(res,response.status,'KI-Anbieter')}
   const data=await response.json()
   const answer=data.choices?.[0]?.message?.content
   if(typeof answer!=='string'||!answer.trim())return error(res,502,'vision','Keine Bildantwort erhalten.')
