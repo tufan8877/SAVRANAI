@@ -490,19 +490,18 @@ function Assistant(){
   }
   useEffect(()=>{
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
-    let active=true,stream:MediaStream|undefined,context:AudioContext|undefined,recorder:MediaRecorder|undefined,frame=0
+    let active=true,stream:MediaStream|undefined,disconnect:(()=>void)|undefined,recorder:MediaRecorder|undefined,frame=0
     const controller=new AbortController()
     let chunks:Blob[]=[],started=0,lastVoice=0,processing=false,handled=false
-    const cleanup=()=>{cancelAnimationFrame(frame);if(recorder?.state==='recording'){recorder.onstop=null;recorder.stop()}stream?.getTracks().forEach(t=>t.stop());if(context&&context.state!=='closed')void context.close().catch(()=>undefined)}
+    const cleanup=()=>{cancelAnimationFrame(frame);if(recorder?.state==='recording'){recorder.onstop=null;recorder.stop()}stream?.getTracks().forEach(t=>t.stop());disconnect?.();disconnect=undefined}
     const begin=async()=>{
       try{
         stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
         if(!active){cleanup();return}
-        context=new AudioContext()
-        await Promise.race([context.resume(),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('Mikrofon-Audiokontext blockiert')),5000))])
+        const mic=await engine.current.microphoneAnalyser(stream)
+        disconnect=mic.disconnect
         if(!active){cleanup();return}
-        const analyser=context.createAnalyser();analyser.fftSize=1024
-        context.createMediaStreamSource(stream).connect(analyser)
+        const analyser=mic.analyser
         const samples=new Float32Array(1024)
         const mime=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'].find(t=>MediaRecorder.isTypeSupported(t))
         recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined)
@@ -514,7 +513,7 @@ function Assistant(){
             if(blob.size){
               const response=await api('transcribe',session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
               const result=await response.json()
-              if(active){const heard=typeof result.text==='string'?result.text.trim():'';setVoiceTrace(heard?'Erkannt: '+heard:'Keine Sprache erkannt.');if(heard&&latestVoice.current(heard)){handled=true;cleanup();return}}
+              if(active){const heard=typeof result.text==='string'?result.text.trim():'';setVoiceTrace(heard?'Erkannt: '+heard:'Keine Sprache erkannt.');if(heard){const wakeOrFollowup=/^(?:(?:hey|he|hei|hi|hallo|okay|ok)[\s,!.:-]*)?(?:core|kor|kore|chor|korr|kohr|kora|koreh|cor|korey|kohl|co|kur)\b/i.test(heard)||Date.now()<=followupUntil.current;if(wakeOrFollowup){handled=true;cleanup();await new Promise(resolve=>setTimeout(resolve,180));if(active)latestVoice.current(heard);return}}}
             }
           }catch(error){if(active)setVoiceTrace('Spracherkennung: '+(error instanceof Error?error.message:String(error)))}
           finally{processing=false;started=0;lastVoice=0}
@@ -526,7 +525,7 @@ function Assistant(){
           let sum=0;for(const v of samples)sum+=v*v
           const loud=Math.sqrt(sum/samples.length)>.012
           const now=performance.now()
-          if(!processing&&recorder!.state==='inactive'&&loud){chunks=[];started=lastVoice=now;setVoiceTrace('Sprache erkannt – Aufnahme läuft …');recorder!.start(200)}
+          if(!processing&&recorder!.state==='inactive'&&loud){chunks=[];started=lastVoice=now;setVoiceTrace('Sprache erkannt – Aufnahme läuft …');recorder!.start()}
           if(recorder!.state==='recording'){
             if(loud)lastVoice=now
             if(now-lastVoice>850||now-started>15000){processing=true;setVoiceTrace('Sprache wird verarbeitet …');recorder!.stop()}
@@ -544,8 +543,8 @@ function Assistant(){
     if(handsFree){stopAssistant();interrupt();return}
     if(busy||!permitted('chat'))return
     if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined'){setNotice('Mikrofonaufnahme wird nicht unterstützt.');return}
-    if(!window.confirm('Sprachmodus aktivieren? Erkannte Sprachabschnitte werden auch vor dem Aktivierungswort an CORE und Groq zur Transkription übertragen.'))return
-    try{await engine.current.unlock().catch(()=>undefined);setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
+    if(!voicePrompt&&!window.confirm('Sprachmodus aktivieren? Erkannte Sprachabschnitte werden auch vor dem Aktivierungswort an CORE und Groq zur Transkription übertragen.'))return
+    try{await engine.current.unlock();setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
   }
   async function microphone(){
     if(handsFree)stopAssistant()
@@ -661,7 +660,7 @@ function Assistant(){
       </div>
     </main>
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>intelaicore.org</span><button className="install" onClick={()=>setInstallHelp(v=>!v)}><Download size={13}/> Installieren</button></footer>
-    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und starte das Gespräch mit „Hey CORE“. Nach einer Antwort kannst du direkt weiterreden. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{setVoicePrompt(false);void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
+    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und starte das Gespräch mit „Hey CORE“. Nach einer Antwort kannst du direkt weiterreden. Erkannte Sprachabschnitte werden zur Transkription an CORE und Groq übertragen.</p><button className="action-btn" onClick={()=>{void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
     {installHelp&&<div className="install-help" role="status"><strong>CORE installieren</strong><div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-Windows-x64.exe" style={{color:"#efae5d"}}>Windows (64-Bit) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-macOS-arm64.dmg" style={{color:"#efae5d"}}>macOS (Apple Silicon) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-macOS-x64.dmg" style={{color:"#efae5d"}}>macOS (Intel) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a>{install&&<button className="action-btn" onClick={async()=>{await install.prompt();await install.userChoice;setInstall(undefined)}}>Webapp installieren</button>}<span>iPhone / iPad: Safari → Teilen → Zum Home-Bildschirm.</span><span>Android: Browsermenü → App installieren.</span><button className="action-btn" onClick={()=>setInstallHelp(false)}>Schließen</button></div></div>}
     {businessOpen&&<SidePanel title="Business-Arbeitsbereich" close={()=>setBusinessOpen(false)}><div className="fields"><p className="muted">CORE für Unternehmen. Chat und Entwürfe sind verfügbar. Die folgenden Verwaltungsmodule befinden sich in Planung.</p>{businessModules.map(({icon:Icon,label,description})=><div key={label} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid rgba(239,174,93,.2)"}}><Icon size={20}/><div style={{flex:1}}><strong>{label}</strong><p className="muted">{description}</p></div><small>Geplant</small></div>)}</div></SidePanel>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
