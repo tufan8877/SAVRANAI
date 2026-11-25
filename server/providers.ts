@@ -4,7 +4,7 @@ export const systemPrompt = `Du bist CORE, der digitale Mitarbeiter von INTEL AI
 export type Message = {role:'user'|'assistant'|'system'; content:string}
 export interface AIProvider {
   chat(messages: Message[], signal: AbortSignal): Promise<Response>
-  transcribe(audio: Blob, extension: string, signal: AbortSignal): Promise<Response>
+  transcribe(audio: Blob, extension: string, signal: AbortSignal, language?: string): Promise<Response>
 }
 export const groqModel = process.env.GROQ_MODEL || 'openai/gpt-oss-120b'
 const groq = (path: string, body: BodyInit, signal: AbortSignal, headers = {}) =>
@@ -21,10 +21,12 @@ export const provider: AIProvider = {
     return groq('chat/completions', JSON.stringify({model:groqModel,messages,stream:true,max_completion_tokens:2048,...web}),
       signal, {'Content-Type':'application/json'})
   },
-  transcribe(audio, extension, signal) {
+  transcribe(audio, extension, signal, language) {
     const form = new FormData()
     form.append('file', audio, 'aufnahme.'+extension)
     form.append('model',process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo')
+    form.append('language',language==='en'?'en':'de')
+    form.append('temperature','0')
     return groq('audio/transcriptions',form,signal)
   },
 }
