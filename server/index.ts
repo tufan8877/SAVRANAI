@@ -183,7 +183,7 @@ app.post('/api/transcribe',express.raw({type:'application/octet-stream',limit:au
   if (!chatReady) return error(res,503,'groq_config','Der Groq API-Key muss auf dem Server konfiguriert werden.')
   const audio = Buffer.isBuffer(req.body) && await audioFormat(req.body)
   if (!audio) return error(res,415,'audio_format','Die Aufnahme hat ein ungültiges oder nicht unterstütztes Audioformat.')
-  const response = await provider.transcribe(new Blob([new Uint8Array(req.body)],{type:audio.mime}),audio.extension,signalFor(res,45_000))
+  const response = await provider.transcribe(new Blob([new Uint8Array(req.body)],{type:audio.mime}),audio.extension,signalFor(res,45_000),req.query.language==='en'?'en':'de')
   if (!response.ok) { await response.body?.cancel(); return upstreamError(res,response.status,'Groq Whisper') }
   const data = await response.json()
   return res.json({text:typeof data.text === 'string' ? data.text.trim().slice(0,8000) : ''})
