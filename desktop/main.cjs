@@ -30,16 +30,18 @@ else{
  win.on('close',e=>{if(!quitting&&tray){e.preventDefault();win.hide()}});
  app.on('activate',show);
  ipcMain.handle('core:local',async(event,action)=>{
- if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
+ if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
  const targets={desktop:'desktop',documents:'documents',downloads:'downloads'};
- if(typeof action!=='string'||!['desktop','documents','downloads','file','mail','outlook','program','list','read','save'].includes(action))throw new Error('Unbekannte Aktion');
- const labels={desktop:'Desktop öffnen',documents:'Dokumente öffnen',downloads:'Downloads öffnen',file:'Eine lokale Datei auswählen und öffnen',mail:'Neue E-Mail im Standard-Mailprogramm öffnen',outlook:'Outlook im Browser öffnen',program:'Installiertes Programm auswählen und starten',list:'Ordner auswählen und Dateinamen anzeigen',read:'Textdatei auswählen und lokal anzeigen',save:'Neue Textdatei erstellen'};
+ if(typeof action!=='string'||!['desktop','documents','downloads','file','mail','outlook','program','list','read','save','desktop-list','status'].includes(action))throw new Error('Unbekannte Aktion');
+ if(action==='status')return 'Desktop-Schnittstelle 1.1 verbunden.';
+ const labels={desktop:'Desktop öffnen',documents:'Dokumente öffnen',downloads:'Downloads öffnen',file:'Eine lokale Datei auswählen und öffnen',mail:'Neue E-Mail im Standard-Mailprogramm öffnen',outlook:'Outlook im Browser öffnen',program:'Installiertes Programm auswählen und starten',list:'Ordner auswählen und Dateinamen anzeigen',read:'Textdatei auswählen und lokal anzeigen',save:'Neue Textdatei erstellen','desktop-list':'Dateinamen auf deinem Desktop für CORE freigeben'};
  if(localBusy)return 'Eine lokale Aktion läuft bereits.';
  localBusy=true;
  try{
  const confirmation=await dialog.showMessageBox(win,{type:'question',buttons:['Abbrechen','Erlauben'],defaultId:0,cancelId:0,title:'CORE – lokaler Zugriff',message:labels[action]+'?'});
  if(confirmation.response!==1)return 'Aktion abgebrochen.';
  if(action==='mail'||action==='outlook'){await shell.openExternal(action==='mail'?'mailto:':'https://outlook.office.com/mail/');return 'Mailprogramm beziehungsweise Outlook-Webseite geöffnet. Keine E-Mail versendet.'}
+ if(action==='desktop-list'){const entries=await fs.readdir(app.getPath('desktop'),{withFileTypes:true});return 'Desktop: '+(entries.slice(0,100).map(e=>(e.isDirectory()?'Ordner: ':'Datei: ')+e.name).join('\n').slice(0,6000)||'Keine Einträge');}
  if(action==='list'||action==='read'||action==='program'||action==='save'){
  if(action==='save'){const chosen=await dialog.showSaveDialog(win,{title:'Neue leere Textdatei',defaultPath:'CORE-Notiz.txt',filters:[{name:'Text',extensions:['txt']}]});if(chosen.canceled||!chosen.filePath)return 'Abgebrochen.';if(!/\.txt$/i.test(chosen.filePath))return 'Nur TXT erlaubt.';await fs.writeFile(chosen.filePath,'',{flag:'wx'});return 'Neue leere Textdatei erstellt.'}
  const selected=await dialog.showOpenDialog(win,{properties:[action==='list'?'openDirectory':'openFile']});if(selected.canceled)return 'Abgebrochen.';const selectedPath=selected.filePaths[0];
