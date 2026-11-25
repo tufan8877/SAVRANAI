@@ -248,9 +248,10 @@ function Assistant(){
     const clean=text.trim()
     if(!clean)return
     const local=(window as unknown as {coreDesktop?:{local:(action:string)=>Promise<string>}}).coreDesktop
-    const extra:Record<string,string>={'öffne ein programm':'program','starte ein programm':'program','zeige dateien':'list','zeige meine dateien':'list','lies eine textdatei':'read','öffne eine textdatei':'read','erstelle eine textdatei':'save'}
+    const extra:Record<string,string>={'desktop prüfen':'status','prüfe desktopzugriff':'status','was ist auf meinem desktop':'desktop-list','was befindet sich auf meinem desktop':'desktop-list','zeige meinen desktopinhalt':'desktop-list','zeige dateien auf meinem desktop':'desktop-list','öffne ein programm':'program','starte ein programm':'program','zeige dateien':'list','zeige meine dateien':'list','lies eine textdatei':'read','öffne eine textdatei':'read','erstelle eine textdatei':'save'}
     const extraAction=extra[clean.toLowerCase().replace(/[.!?]$/,'')]
     const match=clean.match(/^(?:öffne|starte|zeige)\s+(?:(?:mir|meine[n]?|den|die|das|eine[n]?)\s+)*(desktop|dokumente|dokumentenordner|downloads|downloadordner|datei|outlook|mailprogramm|e-mail-programm)[.!]?$/i)
+    if(!local&&(match||extraAction)){setNotice('Desktop-Schnittstelle fehlt. Bitte die aktuelle installierte CORE-Version öffnen.');setPhase('STANDBY');return}
     if(local&&(match||extraAction)){
       const targets:Record<string,string>={desktop:'desktop',dokumente:'documents',dokumentenordner:'documents',downloads:'downloads',downloadordner:'downloads',datei:'file',outlook:'outlook',mailprogramm:'mail','e-mail-programm':'mail'}
       const ticket=existingTicket??++sequence.current
