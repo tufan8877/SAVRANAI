@@ -92,7 +92,9 @@ export class AudioEngine {
     const controller=new AbortController()
     this.playback=controller
     let expired=false
-    const timeout=setTimeout(()=>{expired=true;controller.abort();if(this.playback===controller)this.stopSpeech()},45000)
+    let timeout:ReturnType<typeof setTimeout>
+    const armTimeout=(ms:number)=>{clearTimeout(timeout);timeout=setTimeout(()=>{expired=true;controller.abort();if(this.playback===controller)this.stopSpeech()},ms)}
+    armTimeout(45000)
     try {
       await this.unlock()
       if(controller.signal.aborted)return
@@ -107,6 +109,7 @@ export class AudioEngine {
         for(;;){
           const {value,done}=await reader.read()
           if(done||controller.signal.aborted)break
+          armTimeout(45000)
           let bytes=value
           if(remainder!==undefined){bytes=new Uint8Array(value.length+1);bytes[0]=remainder;bytes.set(value,1)}
           const samples=bytes.length>>1
@@ -127,10 +130,22 @@ export class AudioEngine {
           if(!started){started=true;onStart()}
         }
       } finally {await reader.cancel().catch(()=>undefined);reader.releaseLock()}
-      await Promise.race([last,new Promise<void>(resolve=>{if(controller.signal.aborted)resolve();else controller.signal.addEventListener('abort',()=>resolve(),{once:true})})])
-      if(!started&&!controller.signal.aborted)throw new Error('Fish Audio hat kein Audio geliefert.')
+      // Playback may outlast the network timeout. Safari can omit the final ended event.
+      clearTimeout(timeout!)
+      const remaining=Math.max(0,start-context.currentTime)
+      armTimeout(Math.max(15000,remaining*1000+15000))
+      let poll:ReturnType<typeof setInterval>|undefined
+      try {
+        await Promise.race([last,new Promise<void>(resolve=>{
+          if(controller.signal.aborted){resolve();return}
+          controller.signal.addEventListener('abort',()=>resolve(),{once:true})
+          poll=setInterval(()=>{if(context.currentTime>=start+.15)resolve()},100)
+        })])
+      } finally {clearInterval(poll)}
+      if(expired&&started&&context.currentTime>=start-.05)expired=false
+      if(!started&&!controller.signal.aborted)throw new Error('Der Sprachanbieter hat kein Audio geliefert.')
     } catch(error) {if(!controller.signal.aborted){this.stopSpeech();throw error}}
-    finally {clearTimeout(timeout);if(this.playback===controller)this.playback=undefined}
+    finally {clearTimeout(timeout!);if(this.playback===controller)this.playback=undefined}
     if(expired)throw new Error('Sprachausgabe hat das Zeitlimit erreicht.')
   }
   dispose() {
