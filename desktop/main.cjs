@@ -1,4 +1,4 @@
-const {app,BrowserWindow,session,shell,Tray,Menu,nativeImage,ipcMain,dialog}=require('electron');
+const {app,BrowserWindow,session,shell,Tray,Menu,nativeImage,ipcMain,dialog,desktopCapturer,screen}=require('electron');
 const path=require('node:path');
 const fs=require('node:fs/promises');
 let localBusy=false;
@@ -54,6 +54,26 @@ else{
  else target=app.getPath(targets[action]);
  const error=await shell.openPath(target);if(error)throw new Error('Öffnen fehlgeschlagen.');
  return 'Die ausgewählte Datei oder der Ordner wurde zum Öffnen übergeben.';
+ }finally{localBusy=false}
+ });
+ ipcMain.handle('core:vision',async(event)=>{
+ if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
+ if(localBusy)throw new Error('Eine lokale Aktion läuft bereits.');
+ localBusy=true;
+ try{
+ const consent=await dialog.showMessageBox(win,{type:'warning',title:'CORE Vision',message:'Bildschirm einmalig analysieren?',detail:'Ein Screenshot des Hauptbildschirms wird an den CORE-Server und den KI-Anbieter Groq übertragen. Schließe vorher vertrauliche Inhalte. CORE wird kurz ausgeblendet.',buttons:['Abbrechen','Screenshot erlauben'],defaultId:0,cancelId:0});
+ if(consent.response!==1)return null;
+ const display=screen.getPrimaryDisplay();
+ win.hide();
+ try{
+ await new Promise(resolve=>setTimeout(resolve,650));
+ const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width:1920,height:1080},fetchWindowIcons:false});
+ const source=sources.find(s=>s.display_id===String(display.id))||(sources.length===1?sources[0]:null);
+ if(!source||source.thumbnail.isEmpty())throw new Error('Hauptbildschirm konnte nicht aufgenommen werden.');
+ const jpeg=source.thumbnail.toJPEG(85);
+ if(jpeg.length>4*1024*1024)throw new Error('Screenshot zu groß.');
+ return jpeg.toString('base64');
+ }finally{show()}
  }finally{localBusy=false}
  });
  win.loadURL(url+'/?app=1');
