@@ -444,7 +444,7 @@ function Assistant(){
     <main className="command">
       <div className="stage">
         <button type="button" aria-label={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} title={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
-        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?(recognitionReady?(awaitingCommand?'Ich höre zu – stelle deine Frage':'Warte auf Hey CORE'):'Mikrofon wird verbunden …'):labels[state]}</div></div>
+        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?(recognitionReady?(awaitingCommand?'Ich höre zu – stelle deine Frage':'Sag „Hey CORE“ – ich bin für dich da.'):'Mikrofon wird verbunden …'):labels[state]}</div></div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
