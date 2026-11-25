@@ -1,0 +1,54 @@
+name: CORE Android
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['mobile/**', '.github/workflows/android.yml']
+permissions:
+  contents: write
+concurrency:
+  group: core-android-release
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install and generate Android project
+        working-directory: mobile
+        run: |
+          npm install
+          npx expo install --fix
+          npx expo prebuild --platform android --clean
+      - name: Build signed APK
+        working-directory: mobile/android
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64" && test -n "$KEYSTORE_PASSWORD" && test -n "$KEY_ALIAS" && test -n "$KEY_PASSWORD" || { echo "Android signing secrets missing"; exit 1; }
+          ./gradlew assembleRelease
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/core-release.jks"
+          trap 'rm -f "$RUNNER_TEMP/core-release.jks"' EXIT
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$BUILD_TOOLS/zipalign" -f -p 4 app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/core-aligned.apk"
+          "$BUILD_TOOLS/apksigner" sign --ks "$RUNNER_TEMP/core-release.jks" --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD --out "$RUNNER_TEMP/CORE-Android.apk" "$RUNNER_TEMP/core-aligned.apk"
+          "$BUILD_TOOLS/apksigner" verify "$RUNNER_TEMP/CORE-Android.apk"
+      - name: Publish APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./mobile/package.json').version")
+          gh release view android-v1 >/dev/null 2>&1 || gh release create android-v1 --title "CORE Android v$VERSION" --notes "Android APK"
+          gh release upload android-v1 "$RUNNER_TEMP/CORE-Android.apk" --clobber
+          gh release edit android-v1 --title "CORE Android v$VERSION"
