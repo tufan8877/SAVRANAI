@@ -247,16 +247,22 @@ function Assistant(){
     finally{clearTimeout(timeout);setDiagnosing(false)}
   }
   async function speak(text:string,ticket=++sequence.current){
-    if(!permitted('speech')){setPhase('STANDBY');return}
+    if(ticket!==sequence.current)return
     engine.current.stopSpeech()
     setNotice('');setPhase('PROCESSING')
     try {
-      await engine.current.unlock()
+      if(!config?.speech)throw new Error('Fish Audio nicht verfügbar.')
       await engine.current.speak(signal=>api('speech',session,{method:'POST',signal,body:JSON.stringify({text,voice:profile.voice})}),profile.volume,()=>{
         if(ticket===sequence.current)setPhase('SPEAKING')
       })
       if(ticket===sequence.current)setPhase('STANDBY')
-    }catch(error){if(ticket===sequence.current){setNotice('Sprachausgabe fehlgeschlagen: '+(error instanceof Error?error.message:String(error)));setPhase('STANDBY')}}
+    }catch(error){if(ticket===sequence.current){
+      if('speechSynthesis' in window){
+        setNotice('Fish Audio nicht verfügbar – lokale Ersatzstimme wird versucht.')
+        await new Promise<void>(resolve=>{const u=new SpeechSynthesisUtterance(text);u.lang=profile.language==='en'?'en-US':'de-DE';u.volume=Math.max(0,Math.min(1,profile.volume));const timer=setTimeout(()=>{window.speechSynthesis.cancel();resolve()},30000);u.onend=()=>{clearTimeout(timer);resolve()};u.onerror=()=>{clearTimeout(timer);setNotice('Auch die Ersatzstimme konnte nicht abgespielt werden.');resolve()};window.speechSynthesis.cancel();setPhase('SPEAKING');window.speechSynthesis.speak(u)})
+      }else setNotice('Sprachausgabe fehlgeschlagen: '+(error instanceof Error?error.message:String(error)))
+      if(ticket===sequence.current)setPhase('STANDBY')
+    }}
   }
   async function send(text=input,existingTicket?:number,forceSpeech=false){
     const clean=text.trim()
@@ -525,7 +531,7 @@ function Assistant(){
     if(busy||!permitted('chat'))return
     const browser=window as unknown as {SpeechRecognition?:unknown;webkitSpeechRecognition?:unknown}
     if(!browser.SpeechRecognition&&!browser.webkitSpeechRecognition){setNotice('Automatische Spracherkennung wird in diesem Browser nicht unterstützt.');return}
-    try{await engine.current.unlock();setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
+    try{await engine.current.unlock().catch(()=>undefined);setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
   }
   async function microphone(){
     if(handsFree)stopAssistant()
