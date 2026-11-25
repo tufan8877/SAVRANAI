@@ -470,89 +470,60 @@ function Assistant(){
   }
   latestVoice.current=(text)=>{
     const command=text.trim()
-    const wake=command.match(/^(?:(?:hey|he|hei|hi|hallo|okay|ok)[\s,!.:-]*)?(?:core|kor|kore|chor|korr|kohr|kora|koreh|cor|korey|kohl|co|kur)\b[\s,!.?:-]*/i)
+    const wake=command.match(/^hey[\s,!.:-]+(?:core|kor|kore|chor)\b[\s,!.?:-]*/i)
     if(!wake&&Date.now()>followupUntil.current)return false
     followupUntil.current=0
-    const request=wake?command.slice(wake[0].length).trim():command
     setAwaitingCommand(false)
-    if(!request){
-      const ticket=++sequence.current
-      const greetings=['Ja, wie kann ich dir weiterhelfen?','Ich bin da. Was kann ich für dich tun?','Ja, ich höre dir zu.']
-      setPhase('PROCESSING')
-      void speak(greetings[Math.floor(Math.random()*greetings.length)],ticket).finally(()=>{
-        if(ticket===sequence.current){followupUntil.current=Date.now()+30000;setAwaitingCommand(true);setPhase('STANDBY')}
-      })
-      return true
-    }
+    const request=wake?command.slice(wake[0].length).trim():command
+    recognition.current?.abort()
     if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(request)){stopAssistant();return true}
-    void send(request,undefined,true)
+    if(!request)void speak('Ja, ich höre zu.').then(()=>{followupUntil.current=Date.now()+30000;setAwaitingCommand(true)})
+    else void send(request,undefined,true)
     return true
   }
   useEffect(()=>{
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
-    let active=true,stream:MediaStream|undefined,disconnect:(()=>void)|undefined,recorder:MediaRecorder|undefined,frame=0
-    const controller=new AbortController()
-    let chunks:Blob[]=[],started=0,lastVoice=0,processing=false,handled=false,voicedFrames=0
-    const cleanup=()=>{cancelAnimationFrame(frame);if(recorder?.state==='recording'){recorder.onstop=null;recorder.stop()}stream?.getTracks().forEach(t=>t.stop());disconnect?.();disconnect=undefined}
-    const begin=async()=>{
-      try{
-        stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
-        if(!active){cleanup();return}
-        const mic=await engine.current.microphoneAnalyser(stream)
-        disconnect=mic.disconnect
-        if(!active){cleanup();return}
-        const analyser=mic.analyser
-        const samples=new Float32Array(1024)
-        const mime=['audio/mp4','audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus'].find(t=>MediaRecorder.isTypeSupported(t))
-        const startRecording=()=>{
-          chunks=[];voicedFrames=0;started=performance.now();lastVoice=started
-          recorder=new MediaRecorder(stream!,mime?{mimeType:mime}:undefined)
-          recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}
-          recorder.onstop=async()=>{
-            if(!active)return
-            const blob=new Blob(chunks,{type:recorder!.mimeType})
-            try{
-              if(voicedFrames<6){setVoiceTrace('Mikrofon aktiv – warte auf Sprache.');return}
-              if(!blob.size)throw new Error('Mikrofonaufnahme ist leer.')
-              const response=await api('transcribe?language='+ (profile.language==='en'?'en':'de'),session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
-              const result=await response.json()
-              if(active){
-                const heard=typeof result.text==='string'?result.text.trim():''
-                setVoiceTrace(heard?'Erkannt: '+heard:'Keine Sprache erkannt.')
-                if(heard&&(/^(?:(?:hey|he|hei|hi|hallo|okay|ok)[\s,!.:-]*)?(?:core|kor|kore|chor|korr|kohr|kora|koreh|cor|korey|kohl|co|kur)\b/i.test(heard)||Date.now()<=followupUntil.current)){handled=true;cleanup();await new Promise(resolve=>setTimeout(resolve,180));if(active)latestVoice.current(heard);return}
-              }
-            }catch(error){if(active)setVoiceTrace('Spracherkennung: '+(error instanceof Error?error.message:String(error)))}
-            finally{processing=false;if(active&&!handled)startRecording()}
-          }
-          recorder.start()
+    const browser=window as unknown as {SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition}
+    const Constructor=browser.SpeechRecognition||browser.webkitSpeechRecognition
+    if(!Constructor){setHandsFree(false);setNotice('Dieser Browser unterstützt keine automatische Spracherkennung.');return}
+    const r=new Constructor()
+    recognition.current=r
+    r.lang=profile.language==='en'?'en-US':'de-DE'
+    r.continuous=true;r.interimResults=false
+    setRecognitionReady(false)
+    r.onstart=()=>setRecognitionReady(true)
+    let active=true, timer:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
+    const retry=(delay=700)=>{clearTimeout(timer);if(active&&!document.hidden&&!handled)timer=setTimeout(start,delay)}
+    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start()}catch{retry(1200)}}}
+    r.onresult=e=>{
+      failures=0
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal&&!handled&&e.results[i][0].transcript.trim()){
+          setVoiceTrace('Erkannt: '+e.results[i][0].transcript.trim())
+          if(latestVoice.current(e.results[i][0].transcript.trim())){handled=true;clearTimeout(timer);break}
         }
-        setRecognitionReady(true)
-        setVoiceTrace('Mikrofon aktiv – sprich jetzt.')
-        startRecording()
-        const tick=()=>{
-          if(!active||handled)return
-          analyser.getFloatTimeDomainData(samples)
-          let sum=0;for(const v of samples)sum+=v*v
-          const loud=Math.sqrt(sum/samples.length)>.006
-          const now=performance.now()
-          if(loud){lastVoice=now;voicedFrames++}
-          if(!processing&&recorder?.state==='recording'&&((now-started>1400&&now-lastVoice>650&&lastVoice>started)||now-started>8000)){
-            processing=true;setVoiceTrace('Sprache wird verarbeitet …');recorder.stop()
-          }
-          frame=requestAnimationFrame(tick)
-        }
-        tick()
-      }catch(error){if(active){setNotice('Mikrofon konnte nicht aktiviert werden: '+(error instanceof Error?error.message:String(error)));setHandsFree(false)}cleanup()}
+      }
     }
-    void begin()
-    return ()=>{active=false;controller.abort();cleanup();setRecognitionReady(false)}
-  },[handsFree,phase,online,profile.language,uid,session])
-  useEffect(()=>{if(!awaitingCommand)return;const timer=setTimeout(()=>{followupUntil.current=0;setAwaitingCommand(false)},30000);return ()=>clearTimeout(timer)},[awaitingCommand])
+    r.onerror=e=>{
+      if(!active||handled)return
+      if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){
+        setNotice('Mikrofonzugriff nicht verfügbar: '+e.error)
+        retry(3000);return
+      }
+      failures++
+      retry(Math.min(3000,500*failures))
+    }
+    r.onend=()=>{setRecognitionReady(false);retry()}
+    const visibility=()=>{if(document.hidden){clearTimeout(timer);r.abort()}else retry()}
+    document.addEventListener('visibilitychange',visibility)
+    retry(900)
+    return ()=>{active=false;clearTimeout(timer);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
+  },[handsFree,phase,online,profile.language,uid])
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
-    if(busy||!permitted('chat'))return
-    if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined'){setNotice('Mikrofonaufnahme wird nicht unterstützt.');return}
-    if(!voicePrompt&&!window.confirm('Sprachmodus aktivieren? Erkannte Sprachabschnitte werden auch vor dem Aktivierungswort an CORE und Groq zur Transkription übertragen.'))return
+    if(busy||!permitted('chat')||!permitted('speech'))return
+    const browser=window as unknown as {SpeechRecognition?:unknown;webkitSpeechRecognition?:unknown}
+    if(!browser.SpeechRecognition&&!browser.webkitSpeechRecognition){setNotice('Automatische Spracherkennung wird in diesem Browser nicht unterstützt.');return}
     try{await engine.current.unlock();setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
   }
   async function microphone(){
@@ -669,7 +640,7 @@ function Assistant(){
       </div>
     </main>
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>intelaicore.org</span><button className="install" onClick={()=>setInstallHelp(v=>!v)}><Download size={13}/> Installieren</button></footer>
-    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und starte das Gespräch mit „Hey CORE“. Nach einer Antwort kannst du direkt weiterreden. Erkannte Sprachabschnitte werden zur Transkription an CORE und Groq übertragen.</p><button className="action-btn" onClick={()=>{void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
+    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und starte das Gespräch mit „Hey CORE“. Nach einer Antwort kannst du direkt weiterreden. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
     {installHelp&&<div className="install-help" role="status"><strong>CORE installieren</strong><div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-Windows-x64.exe" style={{color:"#efae5d"}}>Windows (64-Bit) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-macOS-arm64.dmg" style={{color:"#efae5d"}}>macOS (Apple Silicon) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-macOS-x64.dmg" style={{color:"#efae5d"}}>macOS (Intel) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a>{install&&<button className="action-btn" onClick={async()=>{await install.prompt();await install.userChoice;setInstall(undefined)}}>Webapp installieren</button>}<span>iPhone / iPad: Safari → Teilen → Zum Home-Bildschirm.</span><span>Android: Browsermenü → App installieren.</span><button className="action-btn" onClick={()=>setInstallHelp(false)}>Schließen</button></div></div>}
     {businessOpen&&<SidePanel title="Business-Arbeitsbereich" close={()=>setBusinessOpen(false)}><div className="fields"><p className="muted">CORE für Unternehmen. Chat und Entwürfe sind verfügbar. Die folgenden Verwaltungsmodule befinden sich in Planung.</p>{businessModules.map(({icon:Icon,label,description})=><div key={label} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid rgba(239,174,93,.2)"}}><Icon size={20}/><div style={{flex:1}}><strong>{label}</strong><p className="muted">{description}</p></div><small>Geplant</small></div>)}</div></SidePanel>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
