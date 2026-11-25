@@ -290,7 +290,15 @@ function Assistant(){
     followupUntil.current=0
     const request=wake?command.slice(wake[0].length).trim():command
     setAwaitingCommand(false)
-    if(!request){followupUntil.current=Date.now()+30000;setAwaitingCommand(true);return false}
+    if(!request){
+      const ticket=++sequence.current
+      const greetings=['Ja, wie kann ich dir weiterhelfen?','Ich bin da. Was kann ich für dich tun?','Ja, ich höre dir zu.']
+      setPhase('PROCESSING')
+      void speak(greetings[Math.floor(Math.random()*greetings.length)],ticket).finally(()=>{
+        if(ticket===sequence.current){followupUntil.current=Date.now()+30000;setAwaitingCommand(true);setPhase('STANDBY')}
+      })
+      return true
+    }
     if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(request)){stopAssistant();return true}
     void send(request,undefined,true)
     return true
