@@ -26,6 +26,6 @@ else{
  tray.setToolTip('INTEL AI CORE');tray.setContextMenu(menu());tray.on('click',show);
  win.on('close',e=>{if(!quitting&&tray){e.preventDefault();win.hide()}});
  app.on('activate',show);
- win.loadURL(url);
+ win.loadURL(url+'/?app=1');
  }).catch(error=>{console.error('CORE startup failed',error);app.quit()});
 }
