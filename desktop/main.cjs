@@ -116,6 +116,52 @@ else{
  }finally{if(!win.isDestroyed())win.showInactive()}
  }finally{localBusy=false}
  });
+ ipcMain.handle('core:files',async(event,action)=>{
+ if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
+ if(localBusy)throw new Error('Eine lokale Aktion läuft bereits.');
+ if(!action||!['search','read','save'].includes(action.kind))throw new Error('Unbekannte Dateiaktion');
+ localBusy=true;
+ try{
+ if(action.kind==='search'){
+ const query=typeof action.query==='string'?action.query.trim().toLowerCase():'';
+ if(!query||query.length>200)throw new Error('Ungültiger Suchbegriff');
+ const pick=await dialog.showOpenDialog(win,{title:'CORE Files – Suchordner freigeben',properties:['openDirectory']});
+ if(pick.canceled)return null;
+ const results=[];let visited=0,partial=false;
+ async function walk(dir,depth){
+ if(depth>12||visited>=10000||results.length>=50){partial=true;return}
+ let entries;try{entries=await fs.readdir(dir,{withFileTypes:true})}catch{partial=true;return}
+ for(const entry of entries){
+ if(++visited>10000||results.length>=50){partial=true;break}
+ if(entry.isSymbolicLink()||entry.name.startsWith('.'))continue;
+ const full=path.join(dir,entry.name);
+ if(entry.isFile()&&entry.name.toLowerCase().includes(query))results.push(path.relative(pick.filePaths[0],full));
+ if(entry.isDirectory())await walk(full,depth+1);
+ }
+ }
+ await walk(pick.filePaths[0],0);
+ return {text:(results.join('\n')||'Keine passenden Dateien gefunden.')+(partial?'\nSuche begrenzt oder einzelne Ordner nicht lesbar.':'')};
+ }
+ if(action.kind==='read'){
+ const pick=await dialog.showOpenDialog(win,{title:'CORE Files – Textdatei auswählen',properties:['openFile'],filters:[{name:'Textdateien',extensions:['txt','md','csv','json','log']}]});
+ if(pick.canceled)return null;
+ const file=pick.filePaths[0];
+ if(!/\.(txt|md|csv|json|log)$/i.test(file))throw new Error('Dateiformat nicht unterstützt');
+ const consent=await dialog.showMessageBox(win,{type:'warning',title:'CORE Files',message:'Datei zur KI-Analyse freigeben?',detail:path.basename(file)+' – Inhalt wird an den CORE-Server und Groq übertragen.',buttons:['Abbrechen','Erlauben'],defaultId:0,cancelId:0});
+ if(consent.response!==1)return null;
+ const handle=await fs.open(file,'r');
+ try{const stat=await handle.stat();if(!stat.isFile()||stat.size>24000)throw new Error('Maximal 24 KB pro Textdatei.');const buffer=Buffer.alloc(24000);const {bytesRead}=await handle.read(buffer,0,buffer.length,0);return {text:buffer.toString('utf8',0,bytesRead),name:path.basename(file)}}finally{await handle.close()}
+ }
+ if(typeof action.text!=='string'||action.text.length>50000)throw new Error('Ungültiger Text');
+ const pick=await dialog.showSaveDialog(win,{title:'CORE Files – Text speichern',defaultPath:path.join(app.getPath('desktop'),'CORE-Notiz.txt'),filters:[{name:'Text',extensions:['txt']}]});
+ if(pick.canceled||!pick.filePath)return null;
+ if(!/\.txt$/i.test(pick.filePath))throw new Error('Nur TXT unterstützt');
+ const consent=await dialog.showMessageBox(win,{type:'question',title:'CORE Files',message:'Neue Datei speichern?',detail:pick.filePath+'\n\n'+action.text.slice(0,500),buttons:['Abbrechen','Speichern'],defaultId:0,cancelId:0});
+ if(consent.response!==1)return null;
+ await fs.writeFile(pick.filePath,action.text,{flag:'wx',encoding:'utf8'});
+ return {text:'Datei gespeichert: '+path.basename(pick.filePath)};
+ }finally{localBusy=false}
+ });
  win.loadURL(url+'/?app=1');
  }).catch(error=>{console.error('CORE startup failed',error);app.quit()});
 }
