@@ -254,13 +254,13 @@ function Assistant(){
     const program=command.match(/^(?:öffne|starte) (?:den )?(editor|notepad|rechner|taschenrechner|explorer)$/)
     const keys:Record<string,string>={enter:'enter',eingabe:'enter',escape:'escape',esc:'escape',tab:'tab','pfeil hoch':'up','pfeil runter':'down','pfeil links':'left','pfeil rechts':'right','bild hoch':'pageup','bild runter':'pagedown'}
     const apps:Record<string,string>={editor:'notepad',notepad:'notepad',rechner:'calculator',taschenrechner:'calculator',explorer:'explorer'}
-    const action=coordinates?{kind:coordinates[1]==='klicke'?'click':'move',x:Number(coordinates[2]),y:Number(coordinates[3])}:key?{kind:'key',key:keys[key[1]]}:program?{kind:'app',app:apps[program[1]]}:null
+    const action:Record<string,string|number>|null=coordinates?{kind:coordinates[1]==='klicke'?'click':'move',x:Number(coordinates[2]),y:Number(coordinates[3])}:key?{kind:'key',key:keys[key[1]]}:program?{kind:'app',app:apps[program[1]]}:null
     if(action){
       if(!local?.control){setNotice('CORE Control benötigt die aktuelle Windows-Desktopversion.');setPhase('STANDBY');return}
       const ticket=existingTicket??++sequence.current
       engine.current.stopSpeech();setPhase('PROCESSING');setNotice('');setInput('')
       try{
-        const answer=await local.control(action as Record<string,string|number>)
+        const answer=await local.control(action)
         if(ticket!==sequence.current)return
         setMessages(previous=>[...previous,{role:'user',content:clean},{role:'assistant',content:answer}])
         if(forceSpeech||handsFree||profile.speech)await speak(answer,ticket)
