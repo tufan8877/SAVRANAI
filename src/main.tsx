@@ -477,7 +477,7 @@ function Assistant(){
     const request=wake?command.slice(wake[0].length).trim():command
     recognition.current?.abort()
     if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(request)){stopAssistant();return true}
-    if(!request)void speak('Ja, ich höre zu.').then(()=>{followupUntil.current=Date.now()+30000;setAwaitingCommand(true)})
+    if(!request){const ticket=++sequence.current;void speak('Ja, ich höre zu.',ticket).finally(()=>{if(ticket===sequence.current){followupUntil.current=Date.now()+30000;setAwaitingCommand(true);setPhase('STANDBY')}})}
     else void send(request,undefined,true)
     return true
   }
@@ -491,10 +491,10 @@ function Assistant(){
     r.lang=profile.language==='en'?'en-US':'de-DE'
     r.continuous=true;r.interimResults=false
     setRecognitionReady(false)
-    r.onstart=()=>setRecognitionReady(true)
-    let active=true, timer:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
+    r.onstart=()=>{clearTimeout(watchdog);setRecognitionReady(true)}
+    let active=true, timer:ReturnType<typeof setTimeout>|undefined, watchdog:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
     const retry=(delay=700)=>{clearTimeout(timer);if(active&&!document.hidden&&!handled)timer=setTimeout(start,delay)}
-    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start()}catch{retry(1200)}}}
+    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start();clearTimeout(watchdog);watchdog=setTimeout(()=>{if(active&&!handled){try{r.abort()}catch{};retry(1200)}},7000)}catch{retry(1200)}}}
     r.onresult=e=>{
       failures=0
       for(let i=e.resultIndex;i<e.results.length;i++){
@@ -513,11 +513,11 @@ function Assistant(){
       failures++
       retry(Math.min(3000,500*failures))
     }
-    r.onend=()=>{setRecognitionReady(false);retry()}
+    r.onend=()=>{clearTimeout(watchdog);setRecognitionReady(false);retry()}
     const visibility=()=>{if(document.hidden){clearTimeout(timer);r.abort()}else retry()}
     document.addEventListener('visibilitychange',visibility)
     retry(900)
-    return ()=>{active=false;clearTimeout(timer);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
+    return ()=>{active=false;clearTimeout(timer);clearTimeout(watchdog);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
