@@ -91,6 +91,8 @@ export class AudioEngine {
     this.stopSpeech()
     const controller=new AbortController()
     this.playback=controller
+    let expired=false
+    const timeout=setTimeout(()=>{expired=true;controller.abort();if(this.playback===controller)this.stopSpeech()},45000)
     try {
       await this.unlock()
       if(controller.signal.aborted)return
@@ -125,10 +127,11 @@ export class AudioEngine {
           if(!started){started=true;onStart()}
         }
       } finally {await reader.cancel().catch(()=>undefined);reader.releaseLock()}
-      await last
-      if(!started&&!controller.signal.aborted)throw new Error('ElevenLabs hat kein Audio geliefert.')
+      await Promise.race([last,new Promise<void>(resolve=>{if(controller.signal.aborted)resolve();else controller.signal.addEventListener('abort',()=>resolve(),{once:true})})])
+      if(!started&&!controller.signal.aborted)throw new Error('Fish Audio hat kein Audio geliefert.')
     } catch(error) {if(!controller.signal.aborted){this.stopSpeech();throw error}}
-    finally {if(this.playback===controller)this.playback=undefined}
+    finally {clearTimeout(timeout);if(this.playback===controller)this.playback=undefined}
+    if(expired)throw new Error('Sprachausgabe hat das Zeitlimit erreicht.')
   }
   dispose() {
     this.finishRecording(false)
