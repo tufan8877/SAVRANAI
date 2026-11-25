@@ -233,15 +233,16 @@ function Assistant(){
     finally{clearTimeout(timeout);setDiagnosing(false)}
   }
   async function speak(text:string,ticket=++sequence.current){
-    if(!permitted('speech'))return
+    if(!permitted('speech')){setPhase('STANDBY');return}
     engine.current.stopSpeech()
     setNotice('');setPhase('PROCESSING')
     try {
+      await engine.current.unlock()
       await engine.current.speak(signal=>api('speech',session,{method:'POST',signal,body:JSON.stringify({text,voice:profile.voice})}),profile.volume,()=>{
         if(ticket===sequence.current)setPhase('SPEAKING')
       })
       if(ticket===sequence.current)setPhase('STANDBY')
-    }catch(error){if(ticket===sequence.current)report(error)}
+    }catch(error){if(ticket===sequence.current){setNotice('Sprachausgabe fehlgeschlagen: '+(error instanceof Error?error.message:String(error)));setPhase('STANDBY')}}
   }
   async function send(text=input,existingTicket?:number,forceSpeech=false){
     const clean=text.trim()
@@ -271,7 +272,7 @@ function Assistant(){
       if(ticket!==sequence.current)return
       if(!answer.trim())throw new Error('CORE hat keine Antwort erhalten. Bitte versuche es erneut.')
       void refresh().catch(()=>undefined)
-      if((forceSpeech||profile.speech)&&config?.speech)await speak(answer,ticket)
+      if(forceSpeech||handsFree||profile.speech)await speak(answer,ticket)
       else setPhase('STANDBY')
     }catch(error){
       if(ticket!==sequence.current||controller.signal.aborted)return
