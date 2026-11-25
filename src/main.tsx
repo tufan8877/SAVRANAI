@@ -492,7 +492,7 @@ function Assistant(){
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
     let active=true,stream:MediaStream|undefined,disconnect:(()=>void)|undefined,recorder:MediaRecorder|undefined,frame=0
     const controller=new AbortController()
-    let chunks:Blob[]=[],started=0,lastVoice=0,processing=false,handled=false
+    let chunks:Blob[]=[],started=0,lastVoice=0,processing=false,handled=false,voicedFrames=0
     const cleanup=()=>{cancelAnimationFrame(frame);if(recorder?.state==='recording'){recorder.onstop=null;recorder.stop()}stream?.getTracks().forEach(t=>t.stop());disconnect?.();disconnect=undefined}
     const begin=async()=>{
       try{
@@ -505,15 +505,16 @@ function Assistant(){
         const samples=new Float32Array(1024)
         const mime=['audio/mp4','audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus'].find(t=>MediaRecorder.isTypeSupported(t))
         const startRecording=()=>{
-          chunks=[];started=performance.now();lastVoice=started
+          chunks=[];voicedFrames=0;started=performance.now();lastVoice=started
           recorder=new MediaRecorder(stream!,mime?{mimeType:mime}:undefined)
           recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}
           recorder.onstop=async()=>{
             if(!active)return
             const blob=new Blob(chunks,{type:recorder!.mimeType})
             try{
+              if(voicedFrames<6){setVoiceTrace('Mikrofon aktiv – warte auf Sprache.');return}
               if(!blob.size)throw new Error('Mikrofonaufnahme ist leer.')
-              const response=await api('transcribe',session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
+              const response=await api('transcribe?language='+ (profile.language==='en'?'en':'de'),session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
               const result=await response.json()
               if(active){
                 const heard=typeof result.text==='string'?result.text.trim():''
@@ -534,8 +535,8 @@ function Assistant(){
           let sum=0;for(const v of samples)sum+=v*v
           const loud=Math.sqrt(sum/samples.length)>.006
           const now=performance.now()
-          if(loud)lastVoice=now
-          if(!processing&&recorder?.state==='recording'&&((now-started>1400&&now-lastVoice>650&&lastVoice>started)||now-started>5000)){
+          if(loud){lastVoice=now;voicedFrames++}
+          if(!processing&&recorder?.state==='recording'&&((now-started>1400&&now-lastVoice>650&&lastVoice>started)||now-started>8000)){
             processing=true;setVoiceTrace('Sprache wird verarbeitet …');recorder.stop()
           }
           frame=requestAnimationFrame(tick)
@@ -567,7 +568,7 @@ function Assistant(){
         setPhase('PROCESSING')
         const controller=new AbortController()
         abort.current=controller
-        void api('transcribe',session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
+        void api('transcribe?language='+ (profile.language==='en'?'en':'de'),session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
           .then(r=>r.json()).then(({text})=>{
             if(ticket!==sequence.current)return
             if(!text)throw new Error('Whisper hat keine Sprache erkannt.')
