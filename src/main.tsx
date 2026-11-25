@@ -247,7 +247,27 @@ function Assistant(){
   async function send(text=input,existingTicket?:number,forceSpeech=false){
     const clean=text.trim()
     if(!clean)return
-    const local=(window as unknown as {coreDesktop?:{local:(action:string)=>Promise<string>;vision?:()=>Promise<string|null>}}).coreDesktop
+    const local=(window as unknown as {coreDesktop?:{local:(action:string)=>Promise<string>;vision?:()=>Promise<string|null>;control?:(action:Record<string,string|number>)=>Promise<string>}}).coreDesktop
+    const command=clean.toLowerCase().replace(/[.!?]$/,'')
+    const coordinates=command.match(/^(klicke|bewege (?:die )?maus) (?:bei|auf|zu) (\d+)\s*[,; ]\s*(\d+)$/)
+    const key=command.match(/^drücke (?:die taste )?(enter|eingabe|escape|esc|tab|pfeil hoch|pfeil runter|pfeil links|pfeil rechts|bild hoch|bild runter)$/)
+    const program=command.match(/^(?:öffne|starte) (?:den )?(editor|notepad|rechner|taschenrechner|explorer)$/)
+    const keys:Record<string,string>={enter:'enter',eingabe:'enter',escape:'escape',esc:'escape',tab:'tab','pfeil hoch':'up','pfeil runter':'down','pfeil links':'left','pfeil rechts':'right','bild hoch':'pageup','bild runter':'pagedown'}
+    const apps:Record<string,string>={editor:'notepad',notepad:'notepad',rechner:'calculator',taschenrechner:'calculator',explorer:'explorer'}
+    const action=coordinates?{kind:coordinates[1]==='klicke'?'click':'move',x:Number(coordinates[2]),y:Number(coordinates[3])}:key?{kind:'key',key:keys[key[1]]}:program?{kind:'app',app:apps[program[1]]}:null
+    if(action){
+      if(!local?.control){setNotice('CORE Control benötigt die aktuelle Windows-Desktopversion.');setPhase('STANDBY');return}
+      const ticket=existingTicket??++sequence.current
+      engine.current.stopSpeech();setPhase('PROCESSING');setNotice('');setInput('')
+      try{
+        const answer=await local.control(action as Record<string,string|number>)
+        if(ticket!==sequence.current)return
+        setMessages(previous=>[...previous,{role:'user',content:clean},{role:'assistant',content:answer}])
+        if(forceSpeech||handsFree||profile.speech)await speak(answer,ticket)
+      }catch(error){if(ticket===sequence.current)report(error)}
+      finally{if(ticket===sequence.current){if(handsFree){followupUntil.current=Date.now()+30000;setAwaitingCommand(true)}setPhase('STANDBY')}}
+      return
+    }
     const visionRequest=/\b(?:bildschirm|screenshot|core vision|fehlermeldung|geöffnete[sn]? programm)\b/i.test(clean)||/^(?:was siehst du|was muss ich hier anklicken)[.!?]?$/i.test(clean)
     if(visionRequest&&(/\b(?:siehst|sieh|analysiere|erkläre|zeige|prüfe|anklicken|schau|mach|erstelle|lies|steht|vision|screenshot)\b/i.test(clean))){
       if(!local?.vision){setNotice('CORE Vision benötigt die aktuelle Desktopversion.');setPhase('STANDBY');return}
