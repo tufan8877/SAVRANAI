@@ -11,7 +11,8 @@
     "appId": "org.intelaicore.desktop",
     "productName": "Intel AI Core",
     "files": [
-      "main.cjs"
+      "main.cjs",
+      "preload.cjs"
     ],
     "win": {
       "target": "nsis",
