@@ -31,27 +31,26 @@ export const provider: AIProvider = {
   },
 }
 export const voiceIdPattern = /^[A-Za-z0-9_-]{1,80}$/
+const elevenKey=(process.env.ELEVENLABS_API_KEY||'').trim()
+export const fishKey=(process.env.FISH_AUDIO_API_KEY||process.env.FISH_API_KEY||'').trim()
+export const speechProvider=process.env.TTS_PROVIDER==='fish'?'fish':elevenKey?'elevenlabs':'fish'
+export const speechKey=speechProvider==='elevenlabs'?elevenKey:fishKey
 function loadVoices(): {id:string;name:string}[] {
-  const id = (process.env.FISH_AUDIO_VOICE_ID || process.env.ELEVENLABS_VOICE_ID)?.trim()
-  const voices = new Map<string,{id:string;name:string}>()
-  if (id && voiceIdPattern.test(id)) voices.set(id,{id,name:'Standardstimme'})
-  try {
-    const extra: unknown = JSON.parse(process.env.FISH_AUDIO_VOICES_JSON || process.env.ELEVENLABS_VOICES_JSON || '[]')
-    if (Array.isArray(extra)) for (const item of extra) {
-      if (item && typeof item.id === 'string' && voiceIdPattern.test(item.id) &&
-          typeof item.name === 'string' && item.name.trim()) voices.set(item.id,{id:item.id,name:item.name.slice(0,80)})
-    }
-  } catch { console.warn('FISH_AUDIO_VOICES_JSON ist ungültig.') }
-  return [...voices.values()]
+  const eleven=speechProvider==='elevenlabs'
+  const id=(eleven?(process.env.ELEVENLABS_VOICE_ID||'pNInz6obpgDQGcFmaJgB'):process.env.FISH_AUDIO_VOICE_ID)?.trim()
+  const result=new Map<string,{id:string;name:string}>()
+  if(id&&voiceIdPattern.test(id))result.set(id,{id,name:eleven?'CORE – männliche Stimme':'Standardstimme'})
+  try{const extra:unknown=JSON.parse((eleven?process.env.ELEVENLABS_VOICES_JSON:process.env.FISH_AUDIO_VOICES_JSON)||'[]')
+    if(Array.isArray(extra))for(const item of extra)if(item&&typeof item.id==='string'&&voiceIdPattern.test(item.id)&&typeof item.name==='string'&&item.name.trim())result.set(item.id,{id:item.id,name:item.name.slice(0,80)})
+  }catch{console.warn('Ungültige Stimmenkonfiguration')}
+  return [...result.values()]
 }
-export const voices = loadVoices()
-export const fishKey = (process.env.FISH_AUDIO_API_KEY || process.env.FISH_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim()
-export function synthesize(text: string, voice: string, signal: AbortSignal) {
-  return fetch('https://api.fish.audio/v1/tts', {
-    method:'POST', signal,
-    headers:{Authorization:'Bearer '+fishKey,'Content-Type':'application/json',model:process.env.FISH_AUDIO_MODEL || 's2.1-pro-free'},
-    body:JSON.stringify({text,reference_id:voice,format:'pcm',sample_rate:24000,latency:'balanced'}),
+export const voices=loadVoices()
+export function synthesize(text:string,voice:string,signal:AbortSignal){
+  if(speechProvider==='elevenlabs')return fetch('https://api.elevenlabs.io/v1/text-to-speech/'+encodeURIComponent(voice)+'/stream?output_format=pcm_24000',{
+    method:'POST',signal,headers:{'xi-api-key':elevenKey,'Content-Type':'application/json'},body:JSON.stringify({text,model_id:'eleven_flash_v2_5',voice_settings:{stability:0.55,similarity_boost:0.75}})
   })
+  return fetch('https://api.fish.audio/v1/tts',{method:'POST',signal,headers:{Authorization:'Bearer '+fishKey,'Content-Type':'application/json',model:process.env.FISH_AUDIO_MODEL||'s2.1-pro-free'},body:JSON.stringify({text,reference_id:voice,format:'pcm',sample_rate:24000,latency:'balanced'})})
 }
 
 export function analyzePhoto(bytes:Buffer,mime:string,question:string,signal:AbortSignal){
