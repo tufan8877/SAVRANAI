@@ -503,32 +503,40 @@ function Assistant(){
         if(!active){cleanup();return}
         const analyser=mic.analyser
         const samples=new Float32Array(1024)
-        const mime=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'].find(t=>MediaRecorder.isTypeSupported(t))
-        recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined)
-        recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}
-        recorder.onstop=async()=>{
-          if(!active)return
-          const blob=new Blob(chunks,{type:recorder!.mimeType})
-          try{
-            if(blob.size){
+        const mime=['audio/mp4','audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus'].find(t=>MediaRecorder.isTypeSupported(t))
+        const startRecording=()=>{
+          chunks=[];started=performance.now();lastVoice=started
+          recorder=new MediaRecorder(stream!,mime?{mimeType:mime}:undefined)
+          recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}
+          recorder.onstop=async()=>{
+            if(!active)return
+            const blob=new Blob(chunks,{type:recorder!.mimeType})
+            try{
+              if(!blob.size)throw new Error('Mikrofonaufnahme ist leer.')
               const response=await api('transcribe',session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob})
               const result=await response.json()
-              if(active){const heard=typeof result.text==='string'?result.text.trim():'';setVoiceTrace(heard?'Erkannt: '+heard:'Keine Sprache erkannt.');if(heard){const wakeOrFollowup=/^(?:(?:hey|he|hei|hi|hallo|okay|ok)[\s,!.:-]*)?(?:core|kor|kore|chor|korr|kohr|kora|koreh|cor|korey|kohl|co|kur)\b/i.test(heard)||Date.now()<=followupUntil.current;if(wakeOrFollowup){handled=true;cleanup();await new Promise(resolve=>setTimeout(resolve,180));if(active)latestVoice.current(heard);return}}}
-            }
-          }catch(error){if(active)setVoiceTrace('Spracherkennung: '+(error instanceof Error?error.message:String(error)))}
-          finally{processing=false;started=0;lastVoice=0}
+              if(active){
+                const heard=typeof result.text==='string'?result.text.trim():''
+                setVoiceTrace(heard?'Erkannt: '+heard:'Keine Sprache erkannt.')
+                if(heard&&(/^(?:(?:hey|he|hei|hi|hallo|okay|ok)[\s,!.:-]*)?(?:core|kor|kore|chor|korr|kohr|kora|koreh|cor|korey|kohl|co|kur)\b/i.test(heard)||Date.now()<=followupUntil.current)){handled=true;cleanup();await new Promise(resolve=>setTimeout(resolve,180));if(active)latestVoice.current(heard);return}
+              }
+            }catch(error){if(active)setVoiceTrace('Spracherkennung: '+(error instanceof Error?error.message:String(error)))}
+            finally{processing=false;if(active&&!handled)startRecording()}
+          }
+          recorder.start()
         }
         setRecognitionReady(true)
+        setVoiceTrace('Mikrofon aktiv – sprich jetzt.')
+        startRecording()
         const tick=()=>{
           if(!active||handled)return
           analyser.getFloatTimeDomainData(samples)
           let sum=0;for(const v of samples)sum+=v*v
-          const loud=Math.sqrt(sum/samples.length)>.012
+          const loud=Math.sqrt(sum/samples.length)>.006
           const now=performance.now()
-          if(!processing&&recorder!.state==='inactive'&&loud){chunks=[];started=lastVoice=now;setVoiceTrace('Sprache erkannt – Aufnahme läuft …');recorder!.start()}
-          if(recorder!.state==='recording'){
-            if(loud)lastVoice=now
-            if(now-lastVoice>850||now-started>15000){processing=true;setVoiceTrace('Sprache wird verarbeitet …');recorder!.stop()}
+          if(loud)lastVoice=now
+          if(!processing&&recorder?.state==='recording'&&((now-started>1400&&now-lastVoice>650&&lastVoice>started)||now-started>5000)){
+            processing=true;setVoiceTrace('Sprache wird verarbeitet …');recorder.stop()
           }
           frame=requestAnimationFrame(tick)
         }
