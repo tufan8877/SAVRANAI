@@ -21,17 +21,7 @@ export class AudioEngine {
       this.gain.connect(this.analyser)
       this.analyser.connect(this.context.destination)
     }
-    if(this.context.state!=='running'){
-      let timer:ReturnType<typeof setTimeout>|undefined
-      try{await Promise.race([this.context.resume(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('Audioausgabe konnte nicht aktiviert werden.')),4000)})])}finally{clearTimeout(timer)}
-    }
-  }
-  async microphoneAnalyser(stream:MediaStream){
-    await this.unlock()
-    const input=this.context!.createMediaStreamSource(stream)
-    const analyser=this.context!.createAnalyser();analyser.fftSize=1024
-    input.connect(analyser)
-    return {analyser,disconnect:()=>input.disconnect()}
+    if(this.context.state!=='running')await this.context.resume()
   }
   level() {
     if(!this.analyser||!this.sample)return 0
@@ -94,15 +84,13 @@ export class AudioEngine {
   stopSpeech() {
     this.playback?.abort()
     this.playback=undefined
-    for(const source of this.sources){try{source.stop()}catch{};source.disconnect()}
+    for(const source of this.sources){source.stop();source.disconnect()}
     this.sources.clear()
   }
   async speak(load:(signal:AbortSignal)=>Promise<Response>,volume:number,onStart:()=>void) {
     this.stopSpeech()
     const controller=new AbortController()
     this.playback=controller
-    let timedOut=false
-    const timeout=setTimeout(()=>{timedOut=true;controller.abort();this.stopSpeech()},45000)
     try {
       await this.unlock()
       if(controller.signal.aborted)return
@@ -137,11 +125,10 @@ export class AudioEngine {
           if(!started){started=true;onStart()}
         }
       } finally {await reader.cancel().catch(()=>undefined);reader.releaseLock()}
-      await Promise.race([last,new Promise<void>(resolve=>{if(controller.signal.aborted)resolve();else controller.signal.addEventListener('abort',()=>resolve(),{once:true})})])
-      if(!started&&!controller.signal.aborted)throw new Error('Fish Audio hat kein Audio geliefert.')
-    } catch(error) {if(timedOut)throw new Error('Zeitlimit der Sprachausgabe erreicht.');if(!controller.signal.aborted){this.stopSpeech();throw error}}
-    finally {clearTimeout(timeout);if(this.playback===controller)this.playback=undefined}
-    if(timedOut)throw new Error('Zeitlimit der Sprachausgabe erreicht.')
+      await last
+      if(!started&&!controller.signal.aborted)throw new Error('ElevenLabs hat kein Audio geliefert.')
+    } catch(error) {if(!controller.signal.aborted){this.stopSpeech();throw error}}
+    finally {if(this.playback===controller)this.playback=undefined}
   }
   dispose() {
     this.finishRecording(false)
