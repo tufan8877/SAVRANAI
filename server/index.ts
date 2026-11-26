@@ -55,7 +55,10 @@ app.use('/api',async (req,res,next) => {
   if (guest) return next()
   if (!url || !key) return error(res,503,'supabase_config','Supabase ist noch nicht konfiguriert.')
   const token = req.headers.authorization?.match(/^Bearer ([^ ]+)$/i)?.[1]
-  if (!token) return error(res,401,'login','Bitte melde dich an.')
+  if (!token) {
+    if (req.method==='POST' && ['/chat','/speech','/transcribe','/photo','/files/validate'].includes(req.path)) return next()
+    return error(res,401,'login','Bitte melde dich an.')
+  }
   const db = createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false},global:{headers:{Authorization:'Bearer '+token}}})
   const {data, error: authError} = await db.auth.getUser(token)
   if (authError || !data.user?.email_confirmed_at) return error(res,401,'login','Bitte melde dich mit einer bestätigten E-Mail-Adresse an.')
@@ -63,7 +66,7 @@ app.use('/api',async (req,res,next) => {
   res.locals.userId = data.user.id
   next()
 })
-app.use('/api',rateLimit({windowMs:60_000,limit:guest ? 10 : 30,keyGenerator:(req,res)=>guest ? ipKeyGenerator(req.ip || 'unknown') : res.locals.userId,standardHeaders:'draft-8',legacyHeaders:false,handler:(_req,res)=>error(res,429,'rate_limit','Zu viele Anfragen. Bitte warte einen Moment.')}))
+app.use('/api',rateLimit({windowMs:60_000,limit:(_req,res)=>res.locals.userId ? 30 : 10,keyGenerator:(req,res)=>res.locals.userId ? String(res.locals.userId) : ipKeyGenerator(req.ip || 'unknown'),standardHeaders:'draft-8',legacyHeaders:false,handler:(_req,res)=>error(res,429,'rate_limit','Zu viele Anfragen. Bitte warte einen Moment.')}))
 app.use('/api',express.json({limit:'80kb'}))
 function signalFor(res: Response, timeout = 90_000) {
   const controller = new AbortController()
@@ -90,11 +93,11 @@ app.post('/api/chat',async (req,res) => {
   if (!chatReady) return error(res,503,'ai_config','Gemini oder Groq muss auf dem Server konfiguriert werden.')
   const input = chatInput.safeParse(req.body)
   if (!input.success) return error(res,400,'input','Die Nachricht ist leer oder zu lang.')
-  const requester = guest ? ipKeyGenerator(req.ip || 'unknown') : res.locals.userId as string
+  const requester = res.locals.userId ? String(res.locals.userId) : ipKeyGenerator(req.ip || 'unknown')
   if (activeChats.has(requester)) return error(res,409,'chat_active','Eine Antwort wird bereits verarbeitet.')
   activeChats.add(requester)
   try {
-    if (guest) {
+    if (!res.locals.userId) {
       const {history,language,text} = input.data
       await streamAnswer([systemMessage(language),...(history || []),{role:'user',content:text}],res)
     } else {
@@ -224,6 +227,7 @@ app.post('/api/files/validate',express.raw({type:'application/octet-stream',limi
 })
 app.delete('/api/account',async (req,res) => {
   if (guest) return error(res,404,'route','Die Kontoverwaltung ist derzeit deaktiviert.')
+  if (!res.locals.userId) return error(res,401,'login','Bitte melde dich an.')
   if (!url || !process.env.SUPABASE_SERVICE_ROLE_KEY) return error(res,503,'admin_config','Die Kontolöschung ist serverseitig noch nicht konfiguriert.')
   if (req.body?.confirmation !== 'DELETE') return error(res,400,'confirm','Bestätige die Kontolöschung ausdrücklich.')
   const admin = createClient(url,process.env.SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false}})
