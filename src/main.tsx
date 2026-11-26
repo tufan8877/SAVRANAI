@@ -606,7 +606,7 @@ function Assistant(){
   return <div className="app">
     <header className="topbar">
       <button className="brand" aria-label="CORE Startseite" onClick={()=>{if(!busy){reset();close()}}}><span><b>INTEL AI CORE</b></span></button>
-      <div className="top-actions"><button className="profile-btn" onClick={()=>{close();setBusinessOpen(v=>!v)}} aria-expanded={businessOpen}><span>Business</span></button><Time/>{authMode&&<><span className="top-separator"/><button className="profile-btn" onClick={()=>switchPanel('profile')}><UserRound size={17}/><span>{session?(profile.name||'Profil'):'Anmelden'}</span></button></>}</div>
+      <div className="top-actions"><Time/>{authMode&&<><span className="top-separator"/><button className="profile-btn" onClick={()=>switchPanel('profile')}><UserRound size={17}/><span>{session?(profile.name||'Profil'):'Anmelden'}</span></button></>}</div>
     </header>
     <nav className="rail" aria-label="Kommandonavigation">
       <div>
