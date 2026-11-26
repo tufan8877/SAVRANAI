@@ -441,11 +441,11 @@ function Assistant(){
     if(windowCommand||switchWindow||typeText){
       if(!local?.control){setNotice('CORE Control benötigt die aktuelle Windows-Desktopversion.');setPhase('STANDBY');return}
       const operations:Record<string,string>={'schließe':'close','minimiere':'minimize','maximiere':'maximize'}
-      const action=typeText?{kind:'type',text:typeText[1]}:{kind:'window',operation:switchWindow?'switch':operations[windowCommand![1]]}
+      const action:Record<string,string>=typeText?{kind:'type',text:typeText[1]}:{kind:'window',operation:switchWindow?'switch':operations[windowCommand![1]]}
       const ticket=existingTicket??++sequence.current
       engine.current.stopSpeech();setPhase('PROCESSING');setInput('');setNotice('')
       try{
-        const answer=await local.control(action as Record<string,string>)
+        const answer=await local.control(action)
         if(ticket!==sequence.current)return
         setMessages(previous=>[...previous,{role:'user',content:clean},{role:'assistant',content:answer}])
         if(forceSpeech||handsFree||profile.speech)await speak(answer,ticket)
