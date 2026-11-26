@@ -79,6 +79,28 @@ else{
  }finally{show()}
  }finally{localBusy=false}
  });
+ // Resolve only registered Start-menu applications, never user-supplied executable paths.
+ async function launchRegisteredApp(query){
+ if(typeof query!=='string'||!query.trim()||query.length>120)return 'Ungültiger Programmname.';
+ const script='Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress';
+ const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{timeout:15000,windowsHide:true,maxBuffer:2*1024*1024});
+ const parsed=JSON.parse(stdout.trim()||'[]');
+ const normalize=v=>v.normalize('NFKC').toLowerCase().trim().replace(/\s+/g,' ');
+ const q=normalize(query);
+ const aliases={'word':'microsoft word','excel':'microsoft excel','powerpoint':'microsoft powerpoint','chrome':'google chrome','edge':'microsoft edge'};
+ const names=[q,aliases[q]].filter(Boolean);
+ const entries=(Array.isArray(parsed)?parsed:[parsed]).filter(e=>typeof e?.Name==='string'&&typeof e?.AppID==='string'&&e.AppID.length<=512&&!/[\x00-\x1f"\\]/.test(e.AppID));
+ const exact=entries.filter(e=>names.includes(normalize(e.Name)));
+ const matches=exact.length?exact:entries.filter(e=>names.some(n=>normalize(e.Name).includes(n)));
+ if(!matches.length)return 'Kein registriertes Startmenü-Programm gefunden: '+query;
+ if(matches.length>1)return 'Mehrere Programme gefunden. Bitte genauer benennen: '+matches.slice(0,10).map(e=>e.Name).join(', ');
+ const target=matches[0];
+ const consent=await dialog.showMessageBox(win,{type:'question',title:'CORE Control',message:'Programm starten: '+target.Name+'?',detail:target.AppID,buttons:['Abbrechen','Starten'],defaultId:0,cancelId:0});
+ if(consent.response!==1)return 'Aktion abgebrochen.';
+ // No shell interpolation; pass the registered identifier as a single argument.
+ await run('explorer.exe',['shell:AppsFolder\\'+target.AppID],{timeout:10000,windowsHide:true}).catch(e=>{if(e.code!==1)throw e});
+ return 'Programmstart angefordert: '+target.Name;
+ }
  ipcMain.handle('core:control',async(event,action)=>{
  if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
  if(process.platform!=='win32')return 'CORE Control ist derzeit nur für Windows verfügbar.';
@@ -87,6 +109,33 @@ else{
  const apps={notepad:'notepad.exe',calculator:'calc.exe',explorer:'explorer.exe'};
  if(!action||typeof action!=='object')throw new Error('Ungültige Aktion');
  const kind=action.kind;
+ if(kind==='window'||kind==='type'){
+ const operations=['close','minimize','maximize','switch'];
+ if(kind==='window'&&!operations.includes(action.operation))throw new Error('Fensteraktion nicht erlaubt.');
+ if(kind==='type'&&(typeof action.text!=='string'||!action.text.trim()||action.text.length>4000||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(action.text)))throw new Error('Ungültiger Text.');
+ localBusy=true;
+ try{
+ const consent=await dialog.showMessageBox(win,{type:'warning',title:'CORE Control',message:kind==='type'?'Text in das ausgewählte Fenster einfügen?':'Fensteraktion: '+action.operation,detail:(kind==='type'?action.text.slice(0,1000)+'\n\n':'')+'Wähle nach der Freigabe innerhalb von 3 Sekunden das gewünschte Fenster. Beim Einfügen wird die Zwischenablage ersetzt.',buttons:['Abbrechen','Ausführen'],defaultId:0,cancelId:0});
+ if(consent.response!==1)return 'Aktion abgebrochen.';
+ win.hide();
+ try{
+ await new Promise(resolve=>setTimeout(resolve,3000));
+ if(kind==='type'){
+ const {clipboard}=require('electron');
+ clipboard.writeText(action.text);
+ await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"],{timeout:10000,windowsHide:true});
+ }else{
+ const commands={close:'%{F4}',switch:'%{TAB}'};
+ let script;
+ if(commands[action.operation])script="Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('"+commands[action.operation]+"')";
+ else script="Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class CoreWindow { [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr h, int n); }'; $h=[CoreWindow]::GetForegroundWindow(); if($h -eq [IntPtr]::Zero){throw 'Kein Fenster'}; if(-not [CoreWindow]::ShowWindowAsync($h,"+(action.operation==='minimize'?6:3)+")){throw 'Fensteraktion fehlgeschlagen'}";
+ await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{timeout:10000,windowsHide:true});
+ }
+ return 'Eingabe ausgeführt. Bitte Ergebnis im Zielprogramm prüfen.';
+ }finally{if(!win.isDestroyed())win.showInactive()}
+ }finally{localBusy=false}
+ }
+ if(kind==='registered-app'){localBusy=true;try{return await launchRegisteredApp(action.query)}finally{localBusy=false}}
  if(kind==='key'&&!Object.hasOwn(keys,action.key))throw new Error('Taste nicht freigegeben');
  if(kind==='app'&&!Object.hasOwn(apps,action.app))throw new Error('Programm nicht freigegeben');
  if(kind==='move'||kind==='click'){
