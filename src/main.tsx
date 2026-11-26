@@ -470,7 +470,7 @@ function Assistant(){
   }
   latestVoice.current=(text)=>{
     const command=text.trim()
-    const wake=command.match(/^hey[\s,!.:-]+(?:core|kor|kore|chor)\b[\s,!.?:-]*/i)
+    const wake=command.match(/^(?:(?:hey|hei|he|hallo)[\s,!.:-]+(?:core|kor|kore|chor|kohr|cor)\b|(?:hey|hei|he|hallo)[\s,!.?:-]*$)[\s,!.?:-]*/i)
     if(!wake&&Date.now()>followupUntil.current)return false
     followupUntil.current=0
     setAwaitingCommand(false)
