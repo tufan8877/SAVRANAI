@@ -97,7 +97,7 @@ function Assistant(){
   const cameraRef=useRef<HTMLInputElement>(null)
   const close=useCallback(()=>setPanel(null),[])
   const report=useCallback((error:unknown)=>{setNotice(messageFor(error));setPhase('ERROR')},[])
-  const guest=config?.guest===true
+  const guest=Boolean(config&&(config.guest||!session))
   const authMode=config?.guest===false
   const uid=authMode?session?.user.id:undefined
   const activeUid=useRef(uid)
@@ -173,12 +173,12 @@ function Assistant(){
   function permitted(feature:'chat'|'speech'){
     if(!online){setNotice('Du bist offline. Stelle eine Internetverbindung her.');return false}
     if(!config){report(new Error('Die Serverkonfiguration ist momentan nicht erreichbar.'));return false}
-    if(authMode&&(!config.auth||!db)){report(new Error('Supabase ist noch nicht konfiguriert.'));return false}
+    if(session&&authMode&&(!config.auth||!db)){report(new Error('Supabase ist noch nicht konfiguriert.'));return false}
     if(!config[feature]){
       report(new Error(feature==='chat'?'Groq ist noch nicht konfiguriert. Hinterlege den API-Key auf dem Server.':'Fish Audio ist noch nicht konfiguriert. Hinterlege den API-Key und eine Voice-ID.'))
       return false
     }
-    if(authMode&&(!session||recovery)){setPanel('profile');return false}
+    if(authMode&&recovery){setPanel('profile');return false}
     return true
   }
   function stopAssistant(){
@@ -590,7 +590,7 @@ function Assistant(){
     }catch(error){if(ticket===sequence.current&&!controller.signal.aborted){setMessages(previous);report(error)}}finally{if(abort.current===controller)abort.current=null}
   }
   async function attach(file?:File){
-    if(!file||(!guest&&!session))return
+    if(!file||recovery||(!guest&&!session))return
     if(file.type.startsWith('image/')){await photo(file);return}
     if(file.size>8*1024*1024){report(new Error('Dateien dürfen höchstens 8 MB groß sein.'));return}
     const mime=file.type||({txt:'text/plain',pdf:'application/pdf',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'} as Record<string,string>)[file.name.split('.').pop()?.toLowerCase()||'']||''
@@ -640,7 +640,7 @@ function Assistant(){
       </div>
     </main>
     <footer><div><i className={online?'':'off'}/>{online?'SYSTEM ONLINE':'SYSTEM OFFLINE'}</div><span>intelaicore.org</span><button className="install" onClick={()=>setInstallHelp(v=>!v)}><Download size={13}/> Installieren</button></footer>
-    {voicePrompt&&config&&(guest||session&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und starte das Gespräch mit „Hey CORE“. Nach einer Antwort kannst du direkt weiterreden. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
+    {voicePrompt&&config&&((guest||session)&&!recovery)&&<div role="dialog" aria-modal="true" aria-label="Sprachassistent starten" style={{position:'fixed',inset:0,zIndex:1000,display:'grid',placeItems:'center',background:'rgba(0,0,0,.78)',padding:20}}><div style={{maxWidth:360,width:'100%',background:'#15110d',border:'1px solid #8d693e',borderRadius:16,padding:24,color:'#f1d2a5',textAlign:'center'}}><Mic size={30}/><h2>CORE Sprachmodus</h2><p>Erlaube das Mikrofon und starte das Gespräch mit „Hey CORE“. Nach einer Antwort kannst du direkt weiterreden. Die Spracherkennung des Browsers kann gesprochene Sätze zur Verarbeitung übertragen.</p><button className="action-btn" onClick={()=>{void toggleAssistant()}}>Mikrofon zulassen</button><button className="action-btn" onClick={()=>setVoicePrompt(false)}>Nur Text verwenden</button></div></div>}
     {installHelp&&<div className="install-help" role="status"><strong>CORE installieren</strong><div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-Windows-x64.exe" style={{color:"#efae5d"}}>Windows (64-Bit) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-macOS-arm64.dmg" style={{color:"#efae5d"}}>macOS (Apple Silicon) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-macOS-x64.dmg" style={{color:"#efae5d"}}>macOS (Intel) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a>{install&&<button className="action-btn" onClick={async()=>{await install.prompt();await install.userChoice;setInstall(undefined)}}>Webapp installieren</button>}<span>iPhone / iPad: Safari → Teilen → Zum Home-Bildschirm.</span><span>Android: Browsermenü → App installieren.</span><AndroidDownload/><button className="action-btn" onClick={()=>setInstallHelp(false)}>Schließen</button></div></div>}
     {businessOpen&&<SidePanel title="Business-Arbeitsbereich" close={()=>setBusinessOpen(false)}><div className="fields"><p className="muted">CORE für Unternehmen. Chat und Entwürfe sind verfügbar. Die folgenden Verwaltungsmodule befinden sich in Planung.</p>{businessModules.map(({icon:Icon,label,description})=><div key={label} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid rgba(239,174,93,.2)"}}><Icon size={20}/><div style={{flex:1}}><strong>{label}</strong><p className="muted">{description}</p></div><small>Geplant</small></div>)}</div></SidePanel>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
