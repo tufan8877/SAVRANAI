@@ -281,15 +281,17 @@ function Assistant(){
           const response=await api('chat',session,{method:'POST',signal:controller.signal,body:JSON.stringify(guest?{text,language:profile.language,history:[]}:{conversationId:current,text})})
           let result='';await consumeChat(response,piece=>{result+=piece});return result.trim()
         }
-        const raw=await ask('Gib ausschließlich ein JSON-Array mit maximal 5 Schritten zurück. Erlaubt: {"kind":"app","app":"Name eines Windows-Programms"}, {"kind":"search","query":"Dateiname"}, {"kind":"read"}, {"kind":"write","text":"fertiger Text"}, {"kind":"summarize"}, {"kind":"save"}. summarize fasst das letzte Ergebnis zusammen, save speichert es als TXT. Keine anderen Aktionen. Nicht unterstützte Aufträge: []. Auftrag: '+JSON.stringify(task))
+        const raw=await ask('Gib ausschließlich ein JSON-Array mit maximal 5 Schritten zurück. Erlaubt: {"kind":"app","app":"Name eines Windows-Programms"}, {"kind":"search","query":"Dateiname"}, {"kind":"read"}, {"kind":"write","text":"fertiger Text"}, {"kind":"summarize"}, {"kind":"save"}, {"kind":"window","operation":"close|minimize|maximize|switch"}, {"kind":"type","text":"einzufügender Text"}. Fensteraktionen und Texteingabe benötigen manuelle Zielauswahl. summarize fasst das letzte Ergebnis zusammen, save speichert es als TXT. Keine anderen Aktionen. Nicht unterstützte Aufträge: []. Auftrag: '+JSON.stringify(task))
         if(!active())return
         const plan:unknown=JSON.parse(raw.replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,''))
-        type Step={kind:string;app?:string;query?:string;text?:string}
+        type Step={kind:string;app?:string;query?:string;text?:string;operation?:string}
         const valid=(s:unknown):s is Step=>{
           if(!s||typeof s!=='object')return false
           const v=s as Step
           if(v.kind==='app')return typeof v.app==='string'&&v.app.trim().length>0&&v.app.length<=120
           if(v.kind==='search')return typeof v.query==='string'&&v.query.length>0&&v.query.length<=200
+          if(v.kind==='window')return ['close','minimize','maximize','switch'].includes(v.operation||'')
+          if(v.kind==='type')return typeof v.text==='string'&&v.text.trim().length>0&&v.text.length<=4000
           if(v.kind==='write')return typeof v.text==='string'&&v.text.length>0&&v.text.length<=24000
           return ['read','summarize','save'].includes(v.kind)
         }
@@ -297,13 +299,17 @@ function Assistant(){
         const steps=plan as Step[]
         let hasData=false
         for(const s of steps){if(['search','read','write'].includes(s.kind))hasData=true;if(['summarize','save'].includes(s.kind)&&!hasData)throw new Error('Daten-Schritt fehlt.')}
-        const labels=steps.map(s=>s.kind==='app'?'Programm starten: '+s.app:s.kind==='search'?'Dateien suchen: '+s.query:s.kind==='write'?'Text vorbereiten: '+s.text!.slice(0,200):s.kind==='read'?'Textdatei lesen':s.kind==='summarize'?'Daten an KI zur Zusammenfassung senden':'Ergebnis als TXT speichern')
+        const labels=steps.map(s=>s.kind==='window'?'Fensteraktion: '+s.operation:s.kind==='type'?'Text einfügen: '+s.text!.slice(0,200):s.kind==='app'?'Programm starten: '+s.app:s.kind==='search'?'Dateien suchen: '+s.query:s.kind==='write'?'Text vorbereiten: '+s.text!.slice(0,200):s.kind==='read'?'Textdatei lesen':s.kind==='summarize'?'Daten an KI zur Zusammenfassung senden':'Ergebnis als TXT speichern')
         if(!window.confirm('CORE Agent – Aktionsplan freigeben?\n\n'+labels.map((s,i)=>(i+1)+'. '+s).join('\n'))){setNotice('Aktionsplan abgebrochen.');return}
         let data=''
         for(let i=0;i<steps.length;i++){
           if(!active())return
           const s=steps[i];setNotice('CORE Agent: Schritt '+(i+1)+' von '+steps.length+' – '+labels[i])
-          if(s.kind==='app'){
+          if(s.kind==='window'||s.kind==='type'){
+            const result=await local.control(s.kind==='window'?{kind:'window',operation:s.operation!}:{kind:'type',text:s.text!})
+            if(!result.startsWith('Eingabe ausgeführt.'))throw new Error(result)
+            log.push(labels[i]+' – '+result)
+          }else if(s.kind==='app'){
             const result=await local.control(['notepad','calculator','explorer'].includes(s.app!)?{kind:'app',app:s.app!}:{kind:'registered-app',query:s.app!})
             if(!result.startsWith('Programmstart angefordert'))throw new Error(result)
             log.push(result+' ('+s.app+')')
@@ -429,6 +435,24 @@ function Assistant(){
       return
     }
     const command=clean.toLowerCase().replace(/[.!?]$/,'')
+    const windowCommand=command.match(/^(schließe|minimiere|maximiere) (?:das |dieses |aktive |aktuelle )*(?:fenster|programm)$/)
+    const switchWindow=/^(?:wechsle|wechsel) (?:das fenster|zum anderen fenster|zum nächsten fenster)$/.test(command)
+    const typeText=clean.match(/^(?:tippe|schreibe|füge ein):\s*([\s\S]+)$/i)
+    if(windowCommand||switchWindow||typeText){
+      if(!local?.control){setNotice('CORE Control benötigt die aktuelle Windows-Desktopversion.');setPhase('STANDBY');return}
+      const operations:Record<string,string>={'schließe':'close','minimiere':'minimize','maximiere':'maximize'}
+      const action=typeText?{kind:'type',text:typeText[1]}:{kind:'window',operation:switchWindow?'switch':operations[windowCommand![1]]}
+      const ticket=existingTicket??++sequence.current
+      engine.current.stopSpeech();setPhase('PROCESSING');setInput('');setNotice('')
+      try{
+        const answer=await local.control(action as Record<string,string>)
+        if(ticket!==sequence.current)return
+        setMessages(previous=>[...previous,{role:'user',content:clean},{role:'assistant',content:answer}])
+        if(forceSpeech||handsFree||profile.speech)await speak(answer,ticket)
+      }catch(error){if(ticket===sequence.current)report(error)}
+      finally{if(ticket===sequence.current){if(handsFree){followupUntil.current=Date.now()+30000;setAwaitingCommand(true)}setPhase('STANDBY')}}
+      return
+    }
     const coordinates=command.match(/^(klicke|bewege (?:die )?maus) (?:bei|auf|zu) (\d+)\s*[,; ]\s*(\d+)$/)
     const key=command.match(/^drücke (?:die taste )?(enter|eingabe|escape|esc|tab|pfeil hoch|pfeil runter|pfeil links|pfeil rechts|bild hoch|bild runter)$/)
     const program=command.match(/^(?:öffne|starte) (?:den )?(editor|notepad|rechner|taschenrechner|explorer)$/)
