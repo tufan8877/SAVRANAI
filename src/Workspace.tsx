@@ -1,7 +1,7 @@
 import {useEffect,useState,type FormEvent,type ReactNode} from 'react'
 import type {Session} from '@supabase/supabase-js'
 import {AudioLines,Copy,LogOut,Pencil,Plus,Search,Trash2,X} from 'lucide-react'
-import {api,db,messageFor,type Chat,type Config,type Memory,type Message,type Profile} from './data'
+import {api,db,messageFor,type Chat,type Config,type Memory,type MemoryCategory,type Message,type Profile} from './data'
 
 export type Panel = 'history'|'settings'|'memory'|'integrations'|'profile'|null
 export function SidePanel({title,close,children}:{title:string;close:()=>void;children:ReactNode}) {
@@ -93,6 +93,9 @@ export function Settings({profile,config,save}:{profile:Profile;config?:Config;s
 export function Memories({profile,save,report,userId}:{profile:Profile;userId:string;save:(next:Profile)=>Promise<void>;report:(error:unknown)=>void}) {
   const [list,setList]=useState<Memory[]>([])
   const [content,setContent]=useState('')
+  const [category,setCategory]=useState<MemoryCategory>('personal')
+  const [filter,setFilter]=useState('all')
+  const categories:Record<MemoryCategory,string>={personal:'Persönlich',business:'Unternehmen',knowledge:'Fachwissen',task:'Aufgaben'}
   const [id,setId]=useState<string>()
   const [busy,setBusy]=useState(false)
   const [consent,setConsent]=useState(false)
@@ -103,7 +106,7 @@ export function Memories({profile,save,report,userId}:{profile:Profile;userId:st
       if(!client)return
       const entries:Memory[]=[]
       for(let from=0;;from+=500){
-        const {data,error}=await client.from('memories').select('id,content').eq('user_id',userId).order('created_at',{ascending:false}).order('id').range(from,from+499)
+        const {data,error}=await client.from('memories').select('id,content,category').eq('user_id',userId).order('created_at',{ascending:false}).order('id').range(from,from+499)
         if(!current)return
         if(error)throw new Error(error.message)
         entries.push(...data)
@@ -120,8 +123,8 @@ export function Memories({profile,save,report,userId}:{profile:Profile;userId:st
     setBusy(true)
     try {
       const clean=content.trim()
-      const result=id?await db.from('memories').update({content:clean}).eq('id',id).select('id,content').single():
-        await db.from('memories').insert({content:clean}).select('id,content').single()
+      const result=id?await db.from('memories').update({content:clean,category}).eq('id',id).select('id,content,category').single():
+        await db.from('memories').insert({content:clean,category,user_id:userId}).select('id,content,category').single()
       if(result.error)throw new Error(result.error.message)
       setList(prev=>id?prev.map(m=>m.id===id?result.data:m):[result.data,...prev])
       setContent('');setId(undefined);setConsent(false)
@@ -140,15 +143,17 @@ export function Memories({profile,save,report,userId}:{profile:Profile;userId:st
   }
   return <div className="fields">
     <label className="check"><input type="checkbox" checked={profile.memory_enabled} onChange={e=>void save({...profile,memory_enabled:e.target.checked})}/> Langzeitgedächtnis aktivieren</label>
-    <p className="muted">Aktive Erinnerungen fließen in Groq-Anfragen ein. Der Gesprächsverlauf wird separat gespeichert. Du bestimmst, welche Notizen dauerhaft gespeichert werden.</p>
+    <p className="muted">Aktive Erinnerungen werden bei Bedarf an Gemini oder das Ersatzmodell Groq übermittelt. Speichere keine Passwörter oder API-Schlüssel. Der Gesprächsverlauf wird separat gespeichert. Du bestimmst, welche Notizen dauerhaft gespeichert werden.</p>
     {profile.memory_enabled&&<form className="fields" onSubmit={submit}>
+      <label>Kategorie<select value={category} onChange={e=>{setCategory(e.target.value as MemoryCategory);setConsent(false)}}>{Object.entries(categories).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
       <label>{id?'Erinnerung bearbeiten':'Neue Erinnerung'}<textarea value={content} onChange={e=>{setContent(e.target.value);setConsent(false)}} maxLength={2000} required placeholder="Zum Beispiel dein Projekt oder eine Präferenz"/></label>
       <label className="check"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/> Ich stimme der Speicherung dieser Notiz zu.</label>
       <button className="action-btn" disabled={busy||!consent}>Erinnerung speichern</button>
       {id&&<button type="button" onClick={()=>{setId(undefined);setContent('');setConsent(false)}}>Bearbeitung abbrechen</button>}
     </form>}
-    {list.map(item=><article className="memory-row" key={item.id}><p>{item.content}</p>
-      <button className="icon-button" aria-label="Erinnerung bearbeiten" disabled={busy||!profile.memory_enabled} onClick={()=>{setId(item.id);setContent(item.content);setConsent(false)}}><Pencil size={15}/></button>
+    <label>Erinnerungen filtern<select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">Alle Kategorien</option>{Object.entries(categories).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
+    {list.filter(item=>filter==='all'||(item.category||'personal')===filter).map(item=><article className="memory-row" key={item.id}><p><strong>{categories[item.category||'personal']}</strong></p><p>{item.content}</p>
+      <button className="icon-button" aria-label="Erinnerung bearbeiten" disabled={busy||!profile.memory_enabled} onClick={()=>{setId(item.id);setContent(item.content);setCategory(item.category||'personal');setConsent(false)}}><Pencil size={15}/></button>
       <button className="icon-button" aria-label="Erinnerung löschen" disabled={busy} onClick={()=>void remove(item)}><Trash2 size={15}/></button>
     </article>)}
     {!!list.length&&<button className="danger" disabled={busy} onClick={()=>void remove()}>Alle Erinnerungen löschen</button>}
