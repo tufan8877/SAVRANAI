@@ -487,9 +487,10 @@ function Assistant(){
     r.continuous=true;r.interimResults=false
     setRecognitionReady(false)
     r.onstart=()=>{clearTimeout(watchdog);setRecognitionReady(true)}
-    let active=true, timer:ReturnType<typeof setTimeout>|undefined, watchdog:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false
-    const retry=(delay=700)=>{clearTimeout(timer);if(active&&!document.hidden&&!handled)timer=setTimeout(start,delay)}
-    const start=()=>{if(active&&!document.hidden&&!handled){try{r.start();clearTimeout(watchdog);watchdog=setTimeout(()=>{if(active&&!handled){try{r.abort()}catch{};retry(1200)}},7000)}catch{retry(1200)}}}
+    let active=true, timer:ReturnType<typeof setTimeout>|undefined, watchdog:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false, running=false
+    const canListen=()=>active&&(coreDesktop||!document.hidden)&&!handled
+    const retry=(delay=100)=>{clearTimeout(timer);if(canListen()&&!running)timer=setTimeout(start,delay)}
+    const start=()=>{if(canListen()&&!running){try{running=true;r.start();clearTimeout(watchdog);watchdog=setTimeout(()=>{if(canListen()&&running){running=false;try{r.abort()}catch{};retry(250)}},7000)}catch{running=false;retry(250)}}}
     r.onresult=e=>{
       failures=0
       for(let i=e.resultIndex;i<e.results.length;i++){
@@ -503,15 +504,16 @@ function Assistant(){
       if(!active||handled)return
       if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){
         setNotice('Mikrofonzugriff nicht verfügbar: '+e.error)
-        retry(3000);return
+        running=false;retry(3000);return
       }
       failures++
-      retry(Math.min(3000,500*failures))
+      running=false
+      retry(Math.min(2000,200*failures))
     }
-    r.onend=()=>{clearTimeout(watchdog);setRecognitionReady(false);retry()}
-    const visibility=()=>{if(document.hidden){clearTimeout(timer);r.abort()}else retry()}
+    r.onend=()=>{running=false;clearTimeout(watchdog);setRecognitionReady(false);retry(failures?Math.min(2000,200*failures):100)}
+    const visibility=()=>{if(coreDesktop)return;if(document.hidden){clearTimeout(timer);r.abort()}else retry()}
     document.addEventListener('visibilitychange',visibility)
-    retry(900)
+    retry(0)
     return ()=>{active=false;clearTimeout(timer);clearTimeout(watchdog);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
   },[handsFree,phase,online,profile.language,uid])
   async function toggleAssistant(){
