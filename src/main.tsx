@@ -488,6 +488,7 @@ function Assistant(){
     setRecognitionReady(false)
     r.onstart=()=>{clearTimeout(watchdog);setRecognitionReady(true)}
     let active=true, timer:ReturnType<typeof setTimeout>|undefined, watchdog:ReturnType<typeof setTimeout>|undefined, failures=0, handled=false, running=false
+    const coreDesktop=Boolean((window as Window & {coreDesktop?: unknown}).coreDesktop)
     const canListen=()=>active&&(coreDesktop||!document.hidden)&&!handled
     const retry=(delay=100)=>{clearTimeout(timer);if(canListen()&&!running)timer=setTimeout(start,delay)}
     const start=()=>{if(canListen()&&!running){try{running=true;r.start();clearTimeout(watchdog);watchdog=setTimeout(()=>{if(canListen()&&running){running=false;try{r.abort()}catch{};retry(250)}},7000)}catch{running=false;retry(250)}}}
