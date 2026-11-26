@@ -1,6 +1,6 @@
 {
   "name": "intel-ai-core",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "private": true,
   "main": "main.cjs",
   "devDependencies": {
@@ -17,10 +17,6 @@
     "win": {
       "target": "nsis",
       "artifactName": "CORE-Windows-${arch}.${ext}"
-    },
-    "mac": {
-      "target": "dmg",
-      "artifactName": "CORE-macOS-${arch}.${ext}"
     },
     "directories": {
       "output": "dist"
