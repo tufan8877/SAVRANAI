@@ -82,6 +82,8 @@ function Assistant(){
   const [awaitingCommand,setAwaitingCommand]=useState(false)
   const [recognitionReady,setRecognitionReady]=useState(false)
   const [voiceTrace,setVoiceTrace]=useState('')
+  const [micDevices,setMicDevices]=useState<MediaDeviceInfo[]>([])
+  const [micId,setMicId]=useState(()=>localStorage.getItem('core.desktop.mic')||'')
   const [voicePrompt,setVoicePrompt]=useState(true)
   const recognition=useRef<Recognition|null>(null)
   const followupUntil=useRef(0)
@@ -607,7 +609,9 @@ function Assistant(){
       setRecognitionReady(false)
       void (async()=>{
         try{
-          stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
+          stream=await navigator.mediaDevices.getUserMedia({audio:{...(micId?{deviceId:{exact:micId}}:{}),echoCancellation:false,noiseSuppression:false,autoGainControl:false}})
+          const devices=await navigator.mediaDevices.enumerateDevices()
+          if(active)setMicDevices(devices.filter(d=>d.kind==='audioinput'))
           if(!active){stream.getTracks().forEach(t=>t.stop());return}
           ctx=new AudioContext();await ctx.resume()
           if(!active)return
@@ -624,6 +628,9 @@ function Assistant(){
             let sum=0;for(const x of samples)sum+=x*x
             const rms=Math.sqrt(sum/samples.length),loud=rms>.003,now=Date.now()
             if(!rec&&now-lastMeter>500){lastMeter=now;setVoiceTrace('Mikrofon: '+(stream?.getAudioTracks()[0]?.label||'Standard')+' · '+(rms*100).toFixed(3)+' % · '+ctx?.state+(stream?.getAudioTracks()[0]?.muted?' · stumm':'')+' – warte auf Sprache')}
+            const track=stream?.getAudioTracks()[0]
+            if(track?.muted||track?.readyState!=='live'){setRecognitionReady(false);setVoiceTrace('Mikrofon liefert kein Signal: '+(track?.label||'unbekannt')+' – bitte Eingabegerät wechseln');return}
+            setRecognitionReady(true)
             if(loud)lastVoice=now
             if(!rec&&loud){
               const chunks:Blob[]=[]
@@ -687,7 +694,7 @@ function Assistant(){
     document.addEventListener('visibilitychange',visibility)
     retry(0)
     return ()=>{active=false;clearTimeout(timer);clearTimeout(watchdog);r.onstart=null;r.onend=null;r.onresult=null;r.onerror=null;r.abort();document.removeEventListener('visibilitychange',visibility);if(recognition.current===r)recognition.current=null}
-  },[handsFree,phase,online,profile.language,uid])
+  },[handsFree,phase,online,profile.language,uid,micId])
   async function toggleAssistant(){
     if(handsFree){stopAssistant();interrupt();return}
     if(busy||!permitted('chat')||!permitted('speech'))return
@@ -790,7 +797,7 @@ function Assistant(){
     <main className="command">
       <div className="stage">
         <button type="button" aria-label={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} title={handsFree?"Mikrofon ausschalten":"Mikrofon einschalten"} aria-pressed={handsFree} disabled={busy&&!handsFree} onClick={()=>void toggleAssistant()} style={{display:"grid",placeItems:"center",width:"100%",border:0,background:"transparent",cursor:"pointer"}}><Orb mode={state} level={level} reduced={reduced}/></button>
-        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?(recognitionReady?(awaitingCommand?'Ich höre zu – stelle deine Frage':'Sag „Hey CORE“ – ich bin für dich da.'):'Mikrofon wird verbunden …'):labels[state]}</div>{handsFree&&voiceTrace&&<p style={{fontSize:12,opacity:.85,maxWidth:340,overflowWrap:'anywhere'}}>{voiceTrace}</p>}</div>
+        <div className="identity"><p>Dein digitaler Mitarbeiter · KI für Unternehmen</p><div className={'status '+state.toLowerCase()+(online?' connection-online':' connection-offline')} role="status"><i/>{handsFree&&state==='STANDBY'?(recognitionReady?(awaitingCommand?'Ich höre zu – stelle deine Frage':'Sag „Hey CORE“ – ich bin für dich da.'):'Mikrofon wird verbunden …'):labels[state]}</div>{desktopLocal&&micDevices.length>0&&<label style={{fontSize:12}}>Mikrofon <select aria-label="Mikrofon auswählen" value={micId} onChange={e=>{setMicId(e.target.value);localStorage.setItem('core.desktop.mic',e.target.value)}}><option value="">Windows-Standard</option>{micDevices.filter(d=>d.deviceId&&d.deviceId!=='default'&&d.deviceId!=='communications').map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Mikrofon'}</option>)}</select></label>}{handsFree&&voiceTrace&&<p style={{fontSize:12,opacity:.85,maxWidth:340,overflowWrap:'anywhere'}}>{voiceTrace}</p>}</div>
       </div>
       <div className="interaction">
         {notice&&<div className="feedback" role="alert">{notice}<button className="icon-button" aria-label="Hinweis schließen" onClick={()=>{setNotice('');if(phase==='ERROR')setPhase('STANDBY')}}><X size={16}/></button></div>}
