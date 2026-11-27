@@ -1,7 +1,7 @@
 const {app,BrowserWindow,session,shell,Tray,Menu,nativeImage,ipcMain,dialog,desktopCapturer,screen}=require('electron');
 const path=require('node:path');
 const fs=require('node:fs/promises');
-const {execFile}=require('node:child_process');
+const {execFile,spawn}=require('node:child_process');
 const {promisify}=require('node:util');
 const run=promisify(execFile);
 let localBusy=false;
@@ -32,6 +32,23 @@ else{
  tray.setToolTip('INTEL AI CORE');tray.setContextMenu(menu());tray.on('click',show);
  win.on('close',e=>{if(!quitting&&tray){e.preventDefault();win.hide()}});
  app.on('activate',show);
+ let voiceProcess;
+ const stopVoice=()=>{if(voiceProcess){voiceProcess.kill();voiceProcess=undefined}};
+ app.on('before-quit',stopVoice);
+ win.webContents.on('did-start-navigation',(_e,_u,_inPlace,isMainFrame)=>{if(isMainFrame)stopVoice()});
+ ipcMain.handle('core:native-voice',async(event,enabled)=>{
+ if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
+ stopVoice();if(enabled===false)return;
+ if(enabled!==true||process.platform!=='win32')throw new Error('Windows-Spracherkennung nicht verfügbar');
+ const script="$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Speech; $info=[System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers() | Where-Object {$_.Culture.Name -eq 'de-DE'} | Select-Object -First 1; if(!$info){throw 'Deutsches Windows-Spracherkennungspaket (de-DE) fehlt'}; $r=New-Object System.Speech.Recognition.SpeechRecognitionEngine($info); $r.SetInputToDefaultAudioDevice(); $g=New-Object System.Speech.Recognition.GrammarBuilder; $g.Culture=$info.Culture; $g.Append('Hey Core'); $r.LoadGrammar((New-Object System.Speech.Recognition.Grammar($g))); [Console]::WriteLine('READY'); while($true){$v=$r.Recognize([TimeSpan]::FromSeconds(3)); if($v -and $v.Confidence -ge 0.45){[Console]::WriteLine('WAKE'); break}}; $r.UnloadAllGrammars(); $r.LoadGrammar((New-Object System.Speech.Recognition.DictationGrammar)); $r.InitialSilenceTimeout=[TimeSpan]::FromSeconds(12); [Console]::WriteLine('LISTEN'); $v=$r.Recognize([TimeSpan]::FromSeconds(15)); if($v){[Console]::WriteLine('TEXT:'+ $v.Text)} else {[Console]::WriteLine('EMPTY')}; $r.Dispose()";
+ const child=spawn('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true});
+ voiceProcess=child;let buffer='',err='';
+ const emit=(value)=>{if(voiceProcess===child&&!win.isDestroyed())win.webContents.send('core:native-voice-event',value)};
+ child.stdout.setEncoding('utf8');child.stdout.on('data',chunk=>{buffer+=chunk;let i;while((i=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,i).trim();buffer=buffer.slice(i+1);if(line)emit(line)}});
+ child.stderr.setEncoding('utf8');child.stderr.on('data',chunk=>{err=(err+chunk).slice(-2000)});
+ child.on('error',e=>emit('ERROR:'+e.message));
+ child.on('close',code=>{if(voiceProcess===child){emit(code===0?'END':'ERROR:'+(err||'Windows-Spracherkennung beendet: '+code));voiceProcess=undefined}});
+ });
  ipcMain.handle('core:local',async(event,action)=>{
  if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
  const targets={desktop:'desktop',documents:'documents',downloads:'downloads'};
