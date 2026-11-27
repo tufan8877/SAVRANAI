@@ -256,8 +256,9 @@ function Assistant(){
   }
   async function speak(text:string,ticket=++sequence.current){
     if(ticket!==sequence.current)return
+    text=text.replace(/\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$/g,' Die Formel steht im Chat. ').replace(/\\\([\s\S]*?\\\)|(?<!\$)\$[^$\n]+\$(?!\$)/g,' (siehe Chat) ').replace(/^\s*\|.*\|\s*$/gm,'').replace(/^\s*[-:| ]{3,}\s*$/gm,'').replace(/\\(?:frac|dfrac|tfrac|sqrt|dot|mathrm|text|left|right|cdot|times|div|pi|alpha|beta|rho|Delta)\b[^\n]*/g,' Die mathematische Darstellung steht im Chat. ')
     text=text.split(/\n\s*(?:\*\*)?Quellen(?:\*\*)?:/i)[0].replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/g,'$1').replace(/https?:\/\/[^\s]+/g,'').replace(/^\s{0,3}#{1,6}\s+/gm,'').replace(/\*\*|__|\x60/g,'').replace(/^\s*[-*•]\s+/gm,'').replace(/\bz\s*\.\s*b\s*\./gi,'zum Beispiel').replace(/\bbzw\./gi,'beziehungsweise').replace(/\bca\./gi,'ungefähr').replace(/\bd\s*\.\s*h\s*\./gi,'das heißt').replace(/\busw\./gi,'und so weiter').replace(/\bm³\s*\/\s*h\b/g,'Kubikmeter pro Stunde').replace(/\bkWh\b/g,'Kilowattstunden').replace(/\bkW\b/g,'Kilowatt').replace(/\bhPa\b/g,'Hektopascal').replace(/°\s*C/g,' Grad Celsius').replace(/€/g,' Euro').replace(/%/g,' Prozent').replace(/(\d)\s*[×*]\s*(?=\d)/g,'$1 mal ').replace(/(\d)\s*[÷/]\s*(?=\d)/g,'$1 geteilt durch ').replace(/(\d)\s*\+\s*(?=\d)/g,'$1 plus ').replace(/(\d)\s*[-−]\s*(?=\d)/g,'$1 minus ').replace(/\s*=\s*/g,' ergibt ').replace(/\s*\n+\s*/g,' ').replace(/[ \t]+/g,' ').trim()
-    if(!text)return
+    if(!text)text='Die Antwort steht im Chat.'
     engine.current.stopSpeech()
     setNotice('');setPhase('PROCESSING')
     try {
