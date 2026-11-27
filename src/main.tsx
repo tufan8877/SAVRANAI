@@ -263,7 +263,7 @@ function Assistant(){
     setNotice('');setPhase('PROCESSING')
     try {
       if(!config?.speech)throw new Error('KI-Sprachausgabe nicht verfügbar.')
-      await engine.current.speak(signal=>api('speech',session,{method:'POST',signal,body:JSON.stringify({text,voice:profile.voice})}),profile.volume,()=>{
+      await engine.current.speak(signal=>api('speech',session,{method:'POST',signal,body:JSON.stringify({text,voice:profile.voice,natural:true})}),profile.volume,()=>{
         if(ticket===sequence.current)setPhase('SPEAKING')
       })
       if(ticket===sequence.current)setPhase('STANDBY')
