@@ -26,7 +26,7 @@ test('API protects private routes and streams provider responses without exposin
       }
       assert.equal(token,'Bearer confirmed')
       if(url.pathname.endsWith('/conversations'))return init?.method==='POST'?Response.json({id}):new Response(null,{status:204})
-      if(url.pathname.endsWith('/profiles'))return Response.json([])
+      if(url.pathname.endsWith('/profiles'))return Response.json({language:'de',memory_enabled:false})
       if(url.pathname.endsWith('/messages')){
         if(init?.method==='POST'){writes.push(JSON.parse(String(init.body)));return new Response(null,{status:201})}
         return Response.json([{role:'assistant',content:'Earlier answer'}])
@@ -38,7 +38,7 @@ test('API protects private routes and streams provider responses without exposin
       if(url.pathname.endsWith('/transcriptions')){
         const form=init!.body as FormData
         assert.equal(form.get('model'),'whisper-large-v3-turbo')
-        assert.equal(form.get('language'),null)
+        assert.equal(form.get('language'),'de')
         return Response.json({text:' Guten Morgen '})
       }
       const body=JSON.parse(String(init?.body))
@@ -70,7 +70,7 @@ test('API protects private routes and streams provider responses without exposin
     assert.equal(config.headers.get('cache-control'),'no-store')
     assert.doesNotMatch(await config.text(),/groq-fixture|speech-fixture/)
     assert.equal((await realFetch(base+'config',{headers:{Origin:'https://unauthorized.invalid'}})).status,403)
-    assert.equal((await request('chat',{text:'test'})).status,401)
+    assert.equal((await realFetch(base+'account',{method:'DELETE'})).status,401)
     assert.equal((await request('chat',{text:'test'},'bad')).status,401)
     assert.equal((await request('chat',{text:''},'confirmed')).status,400)
     assert.equal(providerCalls,0)
