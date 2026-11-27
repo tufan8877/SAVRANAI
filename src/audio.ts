@@ -121,12 +121,13 @@ export class AudioEngine {
           for(let i=0;i<samples;i++)pcm[i]=view.getInt16(i*2,true)/32768
           const source=context.createBufferSource()
           source.buffer=buffer
+          source.playbackRate.value=1.06
           source.connect(this.gain!)
           this.sources.add(source)
           last=new Promise(resolve=>{source.onended=()=>{this.sources.delete(source);source.disconnect();resolve()}})
-          start=Math.max(start,context.currentTime+.025)
+          if(!started||start<context.currentTime)start=context.currentTime+.18
           source.start(start)
-          start+=buffer.duration
+          start+=buffer.duration/1.06
           if(!started){started=true;onStart()}
         }
       } finally {await reader.cancel().catch(()=>undefined);reader.releaseLock()}
