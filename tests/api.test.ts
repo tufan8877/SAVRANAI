@@ -81,7 +81,10 @@ test('API protects private routes and streams provider responses without exposin
     await consumeChat(response,chunk=>{answer+=chunk})
     assert.equal(answer,'Guten Tag')
     assert.deepEqual(writes.map(row=>[row.role,row.content]),[['user','Hallo'],['assistant','Guten Tag']])
-    assert.equal((await request('speech',{text:answer,voice:'unlisted'},'confirmed')).status,400)
+    const fallbackAudio=await request('speech',{text:answer,voice:'unlisted'},'confirmed')
+    assert.equal(fallbackAudio.status,200)
+    assert.deepEqual([...new Uint8Array(await fallbackAudio.arrayBuffer())],[0,0,1,0])
+    assert.equal((await request('speech',{text:'',voice:'unlisted'},'confirmed')).status,400)
     const audio=await request('speech',{text:answer},'confirmed')
     assert.deepEqual([...new Uint8Array(await audio.arrayBuffer())],[0,0,1,0])
     const upload=async(path:string,body:BodyInit)=>realFetch(base+path,{method:'POST',headers:{
