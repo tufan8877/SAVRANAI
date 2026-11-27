@@ -602,7 +602,7 @@ function Assistant(){
   useEffect(()=>{
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
     if(desktopLocal){
-      let active=true,stream:MediaStream|undefined,ctx:AudioContext|undefined,rec:MediaRecorder|undefined,timer:ReturnType<typeof setInterval>|undefined
+      let active=true,stream:MediaStream|undefined,ctx:AudioContext|undefined,source:MediaStreamAudioSourceNode|undefined,silent:GainNode|undefined,rec:MediaRecorder|undefined,timer:ReturnType<typeof setInterval>|undefined
       const controller=new AbortController()
       setRecognitionReady(false)
       void (async()=>{
@@ -612,7 +612,9 @@ function Assistant(){
           ctx=new AudioContext();await ctx.resume()
           if(!active)return
           const analyser=ctx.createAnalyser();analyser.fftSize=1024
-          ctx.createMediaStreamSource(stream).connect(analyser)
+          source=ctx.createMediaStreamSource(stream)
+          silent=ctx.createGain();silent.gain.value=0
+          source.connect(analyser);analyser.connect(silent);silent.connect(ctx.destination)
           const samples=new Float32Array(1024)
           let started=0,lastVoice=0,pending=false,failures=0,lastMeter=0
           setRecognitionReady(true)
@@ -621,7 +623,7 @@ function Assistant(){
             analyser.getFloatTimeDomainData(samples)
             let sum=0;for(const x of samples)sum+=x*x
             const rms=Math.sqrt(sum/samples.length),loud=rms>.003,now=Date.now()
-            if(!rec&&now-lastMeter>500){lastMeter=now;setVoiceTrace('Mikrofonpegel: '+(rms*100).toFixed(2)+' % – warte auf Sprache')}
+            if(!rec&&now-lastMeter>500){lastMeter=now;setVoiceTrace('Mikrofon: '+(stream?.getAudioTracks()[0]?.label||'Standard')+' · '+(rms*100).toFixed(3)+' % · '+ctx?.state+(stream?.getAudioTracks()[0]?.muted?' · stumm':'')+' – warte auf Sprache')}
             if(loud)lastVoice=now
             if(!rec&&loud){
               const chunks:Blob[]=[]
@@ -645,7 +647,7 @@ function Assistant(){
           },40)
         }catch(error){if(active){setNotice('Desktop-Mikrofon: '+messageFor(error));setHandsFree(false)}}
       })()
-      return ()=>{active=false;controller.abort();clearInterval(timer);if(rec?.state==='recording')rec.stop();stream?.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')void ctx.close().catch(()=>{});setRecognitionReady(false)}
+      return ()=>{active=false;controller.abort();clearInterval(timer);if(rec?.state==='recording')rec.stop();source?.disconnect();silent?.disconnect();stream?.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')void ctx.close().catch(()=>{});setRecognitionReady(false)}
     }
     const browser=window as unknown as {SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition}
     const Constructor=browser.SpeechRecognition||browser.webkitSpeechRecognition
