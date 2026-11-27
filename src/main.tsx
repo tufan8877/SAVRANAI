@@ -614,32 +614,33 @@ function Assistant(){
           const analyser=ctx.createAnalyser();analyser.fftSize=1024
           ctx.createMediaStreamSource(stream).connect(analyser)
           const samples=new Float32Array(1024)
-          let started=0,lastVoice=0,pending=false,failures=0
+          let started=0,lastVoice=0,pending=false,failures=0,lastMeter=0
           setRecognitionReady(true)
           timer=setInterval(()=>{
             if(!active||pending)return
             analyser.getFloatTimeDomainData(samples)
             let sum=0;for(const x of samples)sum+=x*x
-            const loud=Math.sqrt(sum/samples.length)>.012,now=Date.now()
+            const rms=Math.sqrt(sum/samples.length),loud=rms>.003,now=Date.now()
+            if(!rec&&now-lastMeter>500){lastMeter=now;setVoiceTrace('Mikrofonpegel: '+(rms*100).toFixed(2)+' % – warte auf Sprache')}
             if(loud)lastVoice=now
             if(!rec&&loud){
               const chunks:Blob[]=[]
               const recorder=new MediaRecorder(stream!,{mimeType:'audio/webm;codecs=opus'})
-              rec=recorder;started=now
+              rec=recorder;started=now;setVoiceTrace('Sprache erkannt – Aufnahme läuft')
               recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}
               recorder.onstop=()=>{
                 rec=undefined
                 if(!active)return
                 const blob=new Blob(chunks,{type:recorder.mimeType})
-                if(blob.size<1000)return
-                pending=true
+                if(blob.size<1000){setVoiceTrace('Aufnahme zu kurz: '+blob.size+' Bytes');return}
+                pending=true;setVoiceTrace('Aufnahme: '+blob.size+' Bytes – Transkription läuft')
                 void api('transcribe?language='+(profile.language==='en'?'en':'de'),session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob}).then(r=>r.json()).then(({text})=>{
                   if(!active)return
                   failures=0
-                  if(typeof text==='string'&&text.trim()){setVoiceTrace('Erkannt: '+text.trim());latestVoice.current(text.trim())}
-                }).catch(error=>{if(active){setNotice('Desktop-Spracherkennung: '+messageFor(error));if(++failures>=3)setHandsFree(false)}}).finally(()=>{pending=false})
+                  if(typeof text==='string'&&text.trim()){setVoiceTrace('Erkannt: '+text.trim());latestVoice.current(text.trim());lastMeter=Date.now()+5000}else{setVoiceTrace('Transkription leer');lastMeter=Date.now()+5000}
+                }).catch(error=>{if(active){setNotice('Desktop-Spracherkennung: '+messageFor(error));setVoiceTrace('Transkription fehlgeschlagen: '+messageFor(error));lastMeter=Date.now()+10000;if(++failures>=3)setHandsFree(false)}}).finally(()=>{pending=false})
               }
-              recorder.start()
+              try{recorder.start()}catch(error){rec=undefined;setNotice('Aufnahme fehlgeschlagen: '+messageFor(error));setHandsFree(false)}
             }else if(rec&&(now-lastVoice>750||now-started>12000)){if(rec.state==='recording')rec.stop()}
           },40)
         }catch(error){if(active){setNotice('Desktop-Mikrofon: '+messageFor(error));setHandsFree(false)}}
