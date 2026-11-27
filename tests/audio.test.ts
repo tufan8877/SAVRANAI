@@ -7,7 +7,7 @@ test('PCM playback observes real samples and interruption aborts pending audio',
   const analyser={fftSize:512,connect(){},getFloatTimeDomainData(data:Float32Array){data.fill(.25)}}
   const gain={gain:{value:1},connect(){}}
   const destination={}
-  const source={connect(){},disconnect(){},start(){},buffer:null,onended:()=>{},stop(){stopped++;this.onended()}}
+  const source={playbackRate:{value:1},connect(){},disconnect(){},start(){},buffer:null,onended:()=>{},stop(){stopped++;this.onended()}}
   const samples=new Float32Array(2)
   const original=Object.getOwnPropertyDescriptor(globalThis,'AudioContext')
   Object.defineProperty(globalThis,'AudioContext',{configurable:true,value:class {
@@ -25,17 +25,20 @@ test('PCM playback observes real samples and interruption aborts pending audio',
     const started=new Promise<void>(resolve=>{onStart=resolve})
     const playback=engine.speak(async current=>{
       signal=current
+      let cancelled=false
       return new Response(new ReadableStream({
         start(controller){
           controller.enqueue(new Uint8Array([0,64,0,192]))
-          current.addEventListener('abort',()=>controller.close(),{once:true})
+          current.addEventListener('abort',()=>{if(!cancelled)controller.close()},{once:true})
         },
+        cancel(){cancelled=true},
       }))
     },.6,onStart)
     await started
     assert.deepEqual([...samples],[.5,-.5])
     assert.equal(engine.level(),.25)
     assert.equal(gain.gain.value,.6)
+    assert.equal(source.playbackRate.value,1.06)
     engine.stopSpeech()
     assert.equal(signal?.aborted,true)
     assert.equal(stopped,1)
