@@ -611,6 +611,8 @@ function Assistant(){
       const off=native.onNativeVoice(value=>{
         if(!active)return
         if(value==='READY'){setRecognitionReady(true);setVoiceTrace('Windows-Spracherkennung lokal bereit')}
+        else if(value.startsWith('LEVEL:')){setVoiceTrace('Windows Mikrofonpegel: '+value.slice(6)+' %')}
+        else if(value.startsWith('MATCH:')){setVoiceTrace('Windows erkannt: '+value.slice(6))}
         else if(value==='WAKE'||value==='LISTEN'){setAwaitingCommand(true);setVoiceTrace('Hey Core erkannt – bitte sprechen')}
         else if(value.startsWith('TEXT:')){setAwaitingCommand(false);setVoiceTrace('Erkannt: '+value.slice(5));void send(value.slice(5),undefined,true)}
         else if(value.startsWith('ERROR:')){setNotice(value.slice(6));setHandsFree(false)}
