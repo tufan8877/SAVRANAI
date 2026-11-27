@@ -601,6 +601,51 @@ function Assistant(){
   }
   useEffect(()=>{
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
+    if(desktopLocal){
+      let active=true,stream:MediaStream|undefined,ctx:AudioContext|undefined,rec:MediaRecorder|undefined,timer:ReturnType<typeof setInterval>|undefined
+      const controller=new AbortController()
+      setRecognitionReady(false)
+      void (async()=>{
+        try{
+          stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})
+          if(!active){stream.getTracks().forEach(t=>t.stop());return}
+          ctx=new AudioContext();await ctx.resume()
+          if(!active)return
+          const analyser=ctx.createAnalyser();analyser.fftSize=1024
+          ctx.createMediaStreamSource(stream).connect(analyser)
+          const samples=new Float32Array(1024)
+          let started=0,lastVoice=0,pending=false,failures=0
+          setRecognitionReady(true)
+          timer=setInterval(()=>{
+            if(!active||pending)return
+            analyser.getFloatTimeDomainData(samples)
+            let sum=0;for(const x of samples)sum+=x*x
+            const loud=Math.sqrt(sum/samples.length)>.012,now=Date.now()
+            if(loud)lastVoice=now
+            if(!rec&&loud){
+              const chunks:Blob[]=[]
+              const recorder=new MediaRecorder(stream!,{mimeType:'audio/webm;codecs=opus'})
+              rec=recorder;started=now
+              recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}
+              recorder.onstop=()=>{
+                rec=undefined
+                if(!active)return
+                const blob=new Blob(chunks,{type:recorder.mimeType})
+                if(blob.size<1000)return
+                pending=true
+                void api('transcribe?language='+(profile.language==='en'?'en':'de'),session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob}).then(r=>r.json()).then(({text})=>{
+                  if(!active)return
+                  failures=0
+                  if(typeof text==='string'&&text.trim()){setVoiceTrace('Erkannt: '+text.trim());latestVoice.current(text.trim())}
+                }).catch(error=>{if(active){setNotice('Desktop-Spracherkennung: '+messageFor(error));if(++failures>=3)setHandsFree(false)}}).finally(()=>{pending=false})
+              }
+              recorder.start()
+            }else if(rec&&(now-lastVoice>750||now-started>12000)){if(rec.state==='recording')rec.stop()}
+          },40)
+        }catch(error){if(active){setNotice('Desktop-Mikrofon: '+messageFor(error));setHandsFree(false)}}
+      })()
+      return ()=>{active=false;controller.abort();clearInterval(timer);if(rec?.state==='recording')rec.stop();stream?.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')void ctx.close().catch(()=>{});setRecognitionReady(false)}
+    }
     const browser=window as unknown as {SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition}
     const Constructor=browser.SpeechRecognition||browser.webkitSpeechRecognition
     if(!Constructor){setHandsFree(false);setNotice('Dieser Browser unterstützt keine automatische Spracherkennung.');return}
@@ -644,7 +689,8 @@ function Assistant(){
     if(handsFree){stopAssistant();interrupt();return}
     if(busy||!permitted('chat')||!permitted('speech'))return
     const browser=window as unknown as {SpeechRecognition?:unknown;webkitSpeechRecognition?:unknown}
-    if(!browser.SpeechRecognition&&!browser.webkitSpeechRecognition){setNotice('Automatische Spracherkennung wird in diesem Browser nicht unterstützt.');return}
+    if(!desktopLocal&&!browser.SpeechRecognition&&!browser.webkitSpeechRecognition){setNotice('Automatische Spracherkennung wird in diesem Browser nicht unterstützt.');return}
+    if(desktopLocal&&!window.confirm('Sprachmodus aktivieren? Erkannte Sprachabschnitte werden zur Erkennung an den CORE-Server und dessen Transkriptionsanbieter übertragen, auch vor dem Aktivierungswort. Du kannst den Modus jederzeit ausschalten.'))return
     try{await engine.current.unlock();setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
   }
   async function microphone(){
