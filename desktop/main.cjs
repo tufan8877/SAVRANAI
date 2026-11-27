@@ -5,13 +5,16 @@ const {execFile,spawn}=require('node:child_process');
 const {promisify}=require('node:util');
 const run=promisify(execFile);
 let localBusy=false;
-const url='https://savranai.onrender.com';
+const url=require('./test-config.json').url;
+let logQueue=Promise.resolve();
+function diagnostic(event){const line=new Date().toISOString()+' '+event+'\n';logQueue=logQueue.then(async()=>{const file=path.join(app.getPath('userData'),'diagnostics.log');const stat=await fs.stat(file).catch(()=>null);if(stat&&stat.size>512000)await fs.rename(file,file+'.old').catch(()=>{});await fs.appendFile(file,line,'utf8')}).catch(()=>{})}
 const trusted=u=>{try{return new URL(u).origin===url}catch{return false}};
 let win,tray,quitting=false;
 function show(){if(win&&!win.isDestroyed()){win.show();win.focus()}}
 function menu(){return Menu.buildFromTemplate([
  {label:'CORE öffnen',click:show},
  {label:'Beim Anmelden starten',type:'checkbox',checked:app.getLoginItemSettings().openAtLogin,click:item=>app.setLoginItemSettings({openAtLogin:item.checked})},
+ {label:'Diagnoseordner öffnen',click:()=>void shell.openPath(app.getPath('userData'))},
  {label:'CORE vollständig beenden',click:()=>app.quit()}
 ])}
 if(!app.requestSingleInstanceLock())app.quit();
@@ -19,6 +22,7 @@ else{
  app.on('second-instance',show);
  app.on('before-quit',()=>{quitting=true});
  app.whenReady().then(()=>{
+ diagnostic('APP_READY');
  const ses=session.defaultSession;
  ses.setPermissionRequestHandler((wc,permission,callback,details)=>callback(trusted(details.requestingUrl||wc.getURL())&&permission==='media'&&Array.isArray(details.mediaTypes)&&details.mediaTypes.length>0&&details.mediaTypes.every(t=>t==='audio')));
  ses.setPermissionCheckHandler((wc,permission,origin,details)=>trusted(origin)&&permission==='media'&&details.mediaType==='audio');
@@ -26,6 +30,11 @@ else{
  win.webContents.on('will-navigate',(e,u)=>{if(!trusted(u))e.preventDefault()});
  win.webContents.on('will-redirect',(e,u)=>{if(!trusted(u))e.preventDefault()});
  win.webContents.setWindowOpenHandler(({url:u})=>{if(/^https:\/\//i.test(u))void shell.openExternal(u).catch(()=>{});return {action:'deny'}});
+ win.webContents.on('render-process-gone',()=>diagnostic('RENDERER_GONE'));
+ win.webContents.on('unresponsive',()=>diagnostic('RENDERER_UNRESPONSIVE'));
+ win.webContents.on('responsive',()=>diagnostic('RENDERER_RESPONSIVE'));
+ win.webContents.on('did-fail-load',(_e,code,_desc,_url,main)=>{if(main)diagnostic('LOAD_FAILED '+Number(code))});
+ win.webContents.on('did-finish-load',()=>diagnostic('LOAD_READY'));
  const pixels=Buffer.alloc(32*32*4);
  for(let y=0;y<32;y++)for(let x=0;x<32;x++){const d=Math.hypot(x-15.5,y-15.5);if((d>9&&d<13)||d<5){const i=(y*32+x)*4;pixels[i]=90;pixels[i+1]=175;pixels[i+2]=239;pixels[i+3]=255;}}
  tray=new Tray(nativeImage.createFromBitmap(pixels,{width:32,height:32}));
@@ -44,7 +53,7 @@ else{
  if(enabled==='command'){const start=script.indexOf('$g=New-Object');const end=script.indexOf('$r.UnloadAllGrammars();');if(start<0||end<0)throw new Error('Sprachmodus nicht verfügbar');script=script.slice(0,start)+script.slice(end)}else{script=script.slice(0,script.indexOf('$r.UnloadAllGrammars();'))+'$r.Dispose()';}
  const child=spawn('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true});
  voiceProcess=child;let buffer='',err='';
- const emit=(value)=>{if(voiceProcess===child&&!win.isDestroyed())win.webContents.send('core:native-voice-event',value)};
+ const emit=(value)=>{if(voiceProcess===child){const event=value.split(':')[0];if(['READY','WAKE','LISTEN','TEXT','EMPTY','ERROR','END'].includes(event))diagnostic('VOICE_'+event)};if(voiceProcess===child&&!win.isDestroyed())win.webContents.send('core:native-voice-event',value)};
  child.stdout.setEncoding('utf8');child.stdout.on('data',chunk=>{buffer+=chunk;let i;while((i=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,i).trim();buffer=buffer.slice(i+1);if(line)emit(line)}});
  child.stderr.setEncoding('utf8');child.stderr.on('data',chunk=>{err=(err+chunk).slice(-2000)});
  child.on('error',e=>emit('ERROR:'+e.message));
