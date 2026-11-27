@@ -85,9 +85,10 @@ async function groqSearch(messages:Message[],signal:AbortSignal):Promise<Respons
     const tools=Array.isArray(m?.executed_tools)?m.executed_tools:[]
     const urls=new Set<string>()
     for(const t of tools){for(const result of (Array.isArray(t?.search_results?.results)?t.search_results.results:[])){if(typeof result.url==='string'&&result.url.startsWith('https://'))urls.add(result.url)}}
+    console.info('[CORE AI] Groq search response',JSON.stringify({toolCount:tools.length,toolFields:tools.map((t:any)=>Object.keys(t)),searchFields:tools.map((t:any)=>Object.keys(t?.search_results||{})),sourceCount:urls.size,hasAnswer:typeof m?.content==='string'}))
     if(typeof m?.content!=='string'||!urls.size)throw new Error('No verified search results')
     return sse(m.content+'\n\nQuellen:\n'+[...urls].slice(0,8).join('\n'))
-  }catch(e){if(signal.aborted)throw e;return sse(unverified+'Die Rechercheanbieter liefern derzeit keine überprüfbaren Quellen.')}
+  }catch(e){if(signal.aborted)throw e;console.warn('[CORE AI] Groq search failure',e instanceof Error?e.name:'Unknown',e instanceof Error&&e.message==='No verified search results'?'missing sources':'request failed');return sse(unverified+'Die Rechercheanbieter liefern derzeit keine überprüfbaren Quellen.')}
 }
 
 export const provider: AIProvider = {
