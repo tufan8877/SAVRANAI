@@ -56,6 +56,9 @@ const Orb=memo(function Orb({mode,level,reduced}:{mode:CoreState;level:React.Mut
 })
 function Assistant(){
  const desktopVersion=useDesktopRelease()
+  const desktopLocal=Boolean((window as Window & {coreDesktop?:unknown}).coreDesktop)
+  const localKey='core.desktop.history.v1'
+  const [localReady,setLocalReady]=useState(false)
   const [session,setSession]=useState<Session|null>(null)
   const [recovery,setRecovery]=useState(false)
   const [config,setConfig]=useState<Config>()
@@ -92,8 +95,8 @@ function Assistant(){
   const cameraRef=useRef<HTMLInputElement>(null)
   const close=useCallback(()=>setPanel(null),[])
   const report=useCallback((error:unknown)=>{setNotice(messageFor(error));setPhase('ERROR')},[])
-  const guest=Boolean(config&&(config.guest||!session))
-  const authMode=config?.guest===false
+  const guest=desktopLocal||Boolean(config&&(config.guest||!session))
+  const authMode=!desktopLocal&&config?.guest===false
   const uid=authMode?session?.user.id:undefined
   const activeUid=useRef(uid)
   activeUid.current=uid
@@ -119,6 +122,7 @@ function Assistant(){
     abort.current?.abort()
     engine.current.dispose()
     setPhase('STANDBY');setMessages([]);setCurrent(undefined);setChats([]);setProfile(defaults);setNotice('');setInput('')
+    if(desktopLocal){try{const stored=JSON.parse(localStorage.getItem(localKey)||'{}');setProfile({...defaults,...stored.profile});setChats(stored.chats||[]);setCurrent(stored.current);setMessages(stored.entries?.[stored.current]||[]);setLocalReady(true)}catch(error){report(error)}return}
     if(!uid||!db)return
     let active=true
     const client=db
@@ -130,6 +134,10 @@ function Assistant(){
     })
     return ()=>{active=false}
   },[uid,refresh,report])
+  useEffect(()=>{
+    if(!desktopLocal||!localReady)return
+    try{const stored=JSON.parse(localStorage.getItem(localKey)||'{}');const entries=stored.entries||{};if(messages.length&&!current){setCurrent(crypto.randomUUID());return}let next=chats;if(current&&messages.length){entries[current]=messages;if(!chats.some(c=>c.id===current)){next=[{id:current,title:messages[0].content.slice(0,100),updated_at:new Date().toISOString()},...chats];setChats(next)}}localStorage.setItem(localKey,JSON.stringify({profile,chats:next,current,entries}))}catch(error){report(error)}
+  },[desktopLocal,localReady,current,messages,chats,profile,report])
   useEffect(()=>{
     const update=()=>setOnline(navigator.onLine)
     const mq=matchMedia('(prefers-reduced-motion: reduce)')
@@ -190,6 +198,7 @@ function Assistant(){
   }
   async function openChat(id:string){
     stopAssistant()
+    if(desktopLocal){sequence.current++;abort.current?.abort();engine.current.stopSpeech();try{const stored=JSON.parse(localStorage.getItem(localKey)||'{}');setMessages(stored.entries?.[id]||[]);setCurrent(id);setInput('');setPhase('STANDBY')}catch(error){report(error)}return}
     if(!db||!uid)return
     const client=db
     const ticket=++sequence.current
@@ -714,7 +723,7 @@ function Assistant(){
   function submit(event:FormEvent){event.preventDefault();if(!busy)void send()}
   function switchPanel(next:Panel){setBusinessOpen(false);setSaved(false);setPanel(value=>value===next?null:next)}
   const last=messages.at(-1)
-  const setup=config?(authMode&&!config.auth?'Supabase einrichten':!config.chat?'Groq einrichten':guest?'Gastmodus':null):null
+  const setup=config?(authMode&&!config.auth?'Supabase einrichten':!config.chat?'Groq einrichten':desktopLocal?'Lokaler Modus':guest?'Gastmodus':null):null
   return <div className="app">
     <header className="topbar">
       <button className="brand" aria-label="CORE Startseite" onClick={()=>{if(!busy){reset();close()}}}><span><b>INTEL AI CORE</b></span></button>
@@ -756,7 +765,7 @@ function Assistant(){
     {installHelp&&<div className="install-help" role="status"><strong>CORE installieren</strong><div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}><a href="https://github.com/tufan8877/SAVRANAI/releases/download/desktop-v1/CORE-Windows-x64.exe" style={{color:"#efae5d"}}>Windows (64-Bit) herunterladen {desktopVersion?'· v'+desktopVersion:''}</a><span>Die Webversion bleibt auf allen Geräten im Browser verfügbar.</span><button className="action-btn" onClick={()=>setInstallHelp(false)}>Schließen</button></div></div>}
     {businessOpen&&<SidePanel title="Business-Arbeitsbereich" close={()=>setBusinessOpen(false)}><div className="fields"><p className="muted">CORE für Unternehmen. Chat und Entwürfe sind verfügbar. Die folgenden Verwaltungsmodule befinden sich in Planung.</p>{businessModules.map(({icon:Icon,label,description})=><div key={label} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid rgba(239,174,93,.2)"}}><Icon size={20}/><div style={{flex:1}}><strong>{label}</strong><p className="muted">{description}</p></div><small>Geplant</small></div>)}</div></SidePanel>}
     {panel&&<SidePanel title={titles[panel]} close={close}>
-      {panel==='history'&&(guest||session&&!recovery?<History guest={guest} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
+      {panel==='history'&&(guest||session&&!recovery?<History localMode={desktopLocal} guest={guest&&!desktopLocal} chats={chats} id={current} messages={messages} newChat={()=>{reset();close()}} open={id=>void openChat(id)} refresh={refresh} report={report} speak={text=>void speak(text)} busy={busy}/>:authMode&&<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>)}
       {panel==='settings'&&<><Settings profile={profile} config={config} save={save}/><section style={{padding:16,display:'grid',gap:10}}><h3>Sprachdiagnose</h3><button className="action-btn" disabled={diagnosing||busy} onClick={()=>void diagnose('tone')}>1. Testton abspielen</button><button className="action-btn" disabled={diagnosing||busy} onClick={()=>void diagnose('fish')}>2. Fish Audio testen</button><button className="action-btn" disabled={diagnosing||busy} onClick={()=>void diagnose('assistant')}>3. Groq + Sprachausgabe testen</button><p role="status" style={{overflowWrap:'anywhere'}}>{diagnostic}</p><p>Für den Mikrofontest anschließend den Sprachmodus starten und eine Frage stellen.</p></section></>}
       {panel==='memory'&&(!session||recovery?<button className="action-btn" onClick={()=>setPanel('profile')}>Anmelden</button>:<Memories userId={session.user.id} profile={profile} save={save} report={report}/>)}
       {panel==='integrations'&&<div className="fields"><p className="muted">Schnittstellen für zukünftige Versionen.</p><ul className="integrations">{config?.integrations.map(name=><li key={name}>{name}<small>Geplant</small></li>)}</ul></div>}
