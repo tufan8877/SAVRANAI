@@ -46,16 +46,65 @@ async function preferGemini(signal:AbortSignal,primary:()=>Promise<Response>,fal
   console.info('[CORE AI]',kind,'provider='+(kind==='chat-search'?'none':'groq'),'model='+(kind==='vision'?(process.env.GROQ_VISION_MODEL||'qwen/qwen3.8-27b'):groqModel),'status='+response.status)
   return response
 }
+
+async function directWeather(text:string,signal:AbortSignal):Promise<string|undefined>{
+  if(!/\b(wetter|weather|wettervorhersage|wetterbericht)\b/i.test(text))return
+  if(/\b(gestern|übermorgen|nächste woche|yesterday|next week)\b/i.test(text))return
+  const place=text.match(/\b(?:in|für|for|at)\s+([\p{L}][\p{L}\s-]{0,70})/iu)?.[1]?.replace(/\s+(?:heute|morgen|jetzt|aktuell|today|tomorrow|now|ist|sein|wird|aus|bitte)\b.*$/i,'').trim()
+  if(!place)return 'Für welchen Ort möchtest du das Wetter wissen?'
+  const tomorrow=/\b(morgen|tomorrow)\b/i.test(text)
+  try{
+    const timeout=AbortSignal.any([signal,AbortSignal.timeout(10000)])
+    const geo=await fetch('https://geocoding-api.open-meteo.com/v1/search?'+new URLSearchParams({name:place,count:'5',language:'de',format:'json'}),{signal:timeout})
+    if(!geo.ok)throw new Error('Geocoding HTTP '+geo.status)
+    const data=await geo.json()
+    const loc=data.results?.[0]
+    if(!loc)return 'Ich konnte den Ort nicht finden. Bitte nenne die Stadt genauer.'
+    const key=process.env.OPEN_METEO_API_KEY?.trim()
+    const base=key?'https://customer-api.open-meteo.com/v1/forecast':'https://api.open-meteo.com/v1/forecast'
+    if(!key&&process.env.OPEN_METEO_NONCOMMERCIAL!=='true')return undefined
+    const params=new URLSearchParams({latitude:String(loc.latitude),longitude:String(loc.longitude),timezone:'auto',forecast_days:'2',current:'temperature_2m,weather_code',daily:'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code'})
+    if(key)params.set('apikey',key)
+    const response=await fetch(base+'?'+params,{signal:timeout})
+    if(!response.ok)throw new Error('Weather HTTP '+response.status)
+    const w=await response.json(),i=tomorrow?1:0,d=w.daily
+    if(!Number.isFinite(d?.temperature_2m_max?.[i])||!Number.isFinite(d?.temperature_2m_min?.[i]))throw new Error('Missing forecast')
+    const code=d.weather_code?.[i]
+    const condition=code===0?'klar':code<=3?'bewölkt':code<=48?'neblig':code<=67?'Regen oder Nieselregen':code<=77?'Schnee':code<=82?'Regenschauer':code<=86?'Schneeschauer':code>=95?'Gewitter möglich':'unbekannte Wetterlage'
+    const current=!tomorrow&&Number.isFinite(w.current?.temperature_2m)?' Aktuell '+w.current.temperature_2m+' °C.':''
+    const rain=Number.isFinite(d.precipitation_probability_max?.[i])?' Niederschlagswahrscheinlichkeit bis '+d.precipitation_probability_max[i]+' %.':''
+    return (tomorrow?'Morgen':'Heute')+' in '+loc.name+', '+(loc.country||'')+': '+condition+', '+d.temperature_2m_min[i]+' bis '+d.temperature_2m_max[i]+' °C.'+current+rain+'\n\nQuelle: https://open-meteo.com/'
+  }catch(e){if(signal.aborted)throw e;console.warn('[CORE AI] weather unavailable');return undefined}
+}
+async function groqSearch(messages:Message[],signal:AbortSignal):Promise<Response>{
+  if(!process.env.GROQ_API_KEY)return sse(unverified+'Kein Ersatzanbieter verfügbar.')
+  try{
+    const response=await groq('chat/completions',JSON.stringify({model:process.env.GROQ_SEARCH_MODEL||'groq/compound',messages:[{role:'system',content:'Recherchiere öffentliche aktuelle Fakten mit Websuche. Nenne Quellen. Keine privaten Daten suchen.'},{role:'user',content:messages.at(-1)?.content||''}],stream:false}),AbortSignal.any([signal,AbortSignal.timeout(30000)]),{'Content-Type':'application/json'})
+    if(!response.ok){console.warn('[CORE AI] Groq search HTTP',response.status);await response.body?.cancel();throw new Error('Search unavailable')}
+    const data=await response.json(),m=data.choices?.[0]?.message
+    const tools=Array.isArray(m?.executed_tools)?m.executed_tools:[]
+    const urls=new Set<string>()
+    for(const t of tools){for(const result of (Array.isArray(t?.search_results?.results)?t.search_results.results:[])){if(typeof result.url==='string'&&result.url.startsWith('https://'))urls.add(result.url)}}
+    if(typeof m?.content!=='string'||!urls.size)throw new Error('No verified search results')
+    return sse(m.content+'\n\nQuellen:\n'+[...urls].slice(0,8).join('\n'))
+  }catch(e){if(signal.aborted)throw e;return sse(unverified+'Die Rechercheanbieter liefern derzeit keine überprüfbaren Quellen.')}
+}
+
 export const provider: AIProvider = {
-  chat(messages, signal) {
-    const search=needsSearch(messages.at(-1)?.content||'')
+  async chat(messages, signal) {
+    const question=messages.at(-1)?.content||''
+    const weather=await directWeather(question,signal)
+    if(weather)return sse(weather)
+    const search=needsSearch(question)
     return preferGemini(signal,async()=>{
       const instruction=messages.filter(m=>m.role==='system').map(m=>m.content).join('\n')+identity('Google Gemini',geminiModel)+(search?'\nRecherchiere die aktuelle Frage mit Google Search und stütze aktuelle Aussagen auf die Suchergebnisse.':'\nKeine Live-Suche für diese Anfrage verfügbar. Behaupte keine aktuelle Recherche.');
       const contents=messages.filter(m=>m.role!=='system').map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}))
-      return sse(await geminiAnswer(contents,instruction,signal,search))
+      const answer=await geminiAnswer(contents,instruction,signal,search)
+      if(search&&answer.startsWith(unverified))return groqSearch(messages,signal)
+      return sse(answer)
     },async()=>{
       // Without independently verified grounding, do not present fallback knowledge as current.
-      if(search){console.info('[CORE AI] chat current information unavailable; no model answer');return sse(unverified+'Gemini ist derzeit nicht verfügbar. Bitte versuche es später erneut.')}
+      if(search)return groqSearch(messages,signal)
       const fallbackMessages:Message[]=[{role:'system',content:identity('Groq',groqModel)+' Keine Live-Recherche verfügbar. Stelle keine zeitabhängigen Angaben als verifiziert dar.'},...messages]
       return groq('chat/completions',JSON.stringify({model:groqModel,messages:fallbackMessages,stream:true,max_completion_tokens:2048}),signal,{'Content-Type':'application/json'})
     },search?'chat-search':'chat')
