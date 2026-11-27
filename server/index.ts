@@ -198,11 +198,11 @@ app.post('/api/transcribe',express.raw({type:'application/octet-stream',limit:au
 })
 app.post('/api/speech',async (req,res) => {
   if (!speechReady) return error(res,503,'speech_config','Sprachanbieter und Voice-ID müssen konfiguriert werden.')
-  const input = z.object({text:z.string().trim().min(1).max(24000),voice:z.string().max(80).optional()}).safeParse(req.body)
+  const input = z.object({text:z.string().trim().min(1).max(24000),voice:z.string().max(80).optional(),natural:z.boolean().optional()}).safeParse(req.body)
   if (!input.success) return error(res,400,'speech_input','Ungültiger Text für die Sprachausgabe.')
   const voice = voices.some(item=>item.id===input.data.voice)?input.data.voice!:voices[0].id
   if (!voices.some(item=>item.id===voice)) return error(res,400,'speech_voice','Diese Stimme ist nicht verfügbar.')
-  const response = await synthesize(input.data.text,voice,signalFor(res))
+  const response = await synthesize(input.data.text,voice,signalFor(res),input.data.natural===true)
   if (!response.ok || !response.body) { await response.body?.cancel(); console.warn(speechProvider+' HTTP',response.status); if(response.status===401||response.status===403)return error(res,502,'speech_credentials',speechProvider+': API-Key oder Berechtigung ungültig.'); if(response.status===402)return error(res,502,'speech_credit',speechProvider+': API-Guthaben fehlt.'); return upstreamError(res,response.status,speechProvider) }
   res.set({'Content-Type':'application/octet-stream','X-Audio-Sample-Rate':'24000','X-Accel-Buffering':'no'})
   await pipeline(Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),res)
