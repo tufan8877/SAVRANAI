@@ -603,6 +603,22 @@ function Assistant(){
   }
   useEffect(()=>{
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
+    const native=(window as Window & {coreDesktop?:{nativeVoice?:(enabled:boolean)=>Promise<void>;onNativeVoice?:(callback:(value:string)=>void)=>()=>void}}).coreDesktop
+    if(native?.nativeVoice&&native.onNativeVoice){
+      let active=true, retry:ReturnType<typeof setTimeout>|undefined
+      const start=()=>{if(active)void native.nativeVoice!(true).catch(error=>{if(active){setNotice(messageFor(error));setHandsFree(false)}})}
+      setRecognitionReady(false)
+      const off=native.onNativeVoice(value=>{
+        if(!active)return
+        if(value==='READY'){setRecognitionReady(true);setVoiceTrace('Windows-Spracherkennung lokal bereit')}
+        else if(value==='WAKE'||value==='LISTEN'){setAwaitingCommand(true);setVoiceTrace('Hey Core erkannt – bitte sprechen')}
+        else if(value.startsWith('TEXT:')){setAwaitingCommand(false);setVoiceTrace('Erkannt: '+value.slice(5));void send(value.slice(5),undefined,true)}
+        else if(value.startsWith('ERROR:')){setNotice(value.slice(6));setHandsFree(false)}
+        else if(value==='END'){setAwaitingCommand(false);retry=setTimeout(start,500)}
+      })
+      start()
+      return ()=>{active=false;clearTimeout(retry);off();void native.nativeVoice!(false).catch(()=>{});setRecognitionReady(false)}
+    }
     if(desktopLocal){
       let active=true,stream:MediaStream|undefined,ctx:AudioContext|undefined,source:MediaStreamAudioSourceNode|undefined,silent:GainNode|undefined,rec:MediaRecorder|undefined,timer:ReturnType<typeof setInterval>|undefined
       const controller=new AbortController()
@@ -700,7 +716,7 @@ function Assistant(){
     if(busy||!permitted('chat')||!permitted('speech'))return
     const browser=window as unknown as {SpeechRecognition?:unknown;webkitSpeechRecognition?:unknown}
     if(!desktopLocal&&!browser.SpeechRecognition&&!browser.webkitSpeechRecognition){setNotice('Automatische Spracherkennung wird in diesem Browser nicht unterstützt.');return}
-    if(desktopLocal&&!window.confirm('Sprachmodus aktivieren? Erkannte Sprachabschnitte werden zur Erkennung an den CORE-Server und dessen Transkriptionsanbieter übertragen, auch vor dem Aktivierungswort. Du kannst den Modus jederzeit ausschalten.'))return
+    if(desktopLocal&&!(window as Window & {coreDesktop?:{nativeVoice?:unknown}}).coreDesktop?.nativeVoice&&!window.confirm('Sprachmodus aktivieren? Erkannte Sprachabschnitte werden zur Erkennung an den CORE-Server und dessen Transkriptionsanbieter übertragen, auch vor dem Aktivierungswort. Du kannst den Modus jederzeit ausschalten.'))return
     try{await engine.current.unlock();setVoicePrompt(false);setNotice('');setPhase('STANDBY');setHandsFree(true)}catch(error){report(error)}
   }
   async function microphone(){
