@@ -256,6 +256,8 @@ function Assistant(){
   }
   async function speak(text:string,ticket=++sequence.current){
     if(ticket!==sequence.current)return
+    text=text.split(/\n\s*(?:\*\*)?Quellen(?:\*\*)?:/i)[0].replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/g,'$1').replace(/https?:\/\/[^\s]+/g,'').replace(/^s{0,3}#{1,6}\s+/gm,'').replace(/\*\*|__|`/g,'').replace(/^\s*[-*•]\s+/gm,'').replace(/\s*\n+\s*/g,' ').trim()
+    if(!text)return
     engine.current.stopSpeech()
     setNotice('');setPhase('PROCESSING')
     try {
@@ -267,7 +269,7 @@ function Assistant(){
     }catch(error){if(ticket===sequence.current){
       if('speechSynthesis' in window){
         setNotice('KI-Sprachausgabe fehlgeschlagen – Systemstimme wird versucht: '+(error instanceof Error?error.message:String(error)))
-        await new Promise<void>(resolve=>{const u=new SpeechSynthesisUtterance(text);u.lang=profile.language==='en'?'en-US':'de-DE';u.volume=Math.max(0,Math.min(1,profile.volume));const timer=setTimeout(()=>{window.speechSynthesis.cancel();resolve()},30000);u.onend=()=>{clearTimeout(timer);resolve()};u.onerror=()=>{clearTimeout(timer);setNotice('Auch die Ersatzstimme konnte nicht abgespielt werden.');resolve()};window.speechSynthesis.cancel();setPhase('SPEAKING');window.speechSynthesis.speak(u)})
+        await new Promise<void>(resolve=>{const u=new SpeechSynthesisUtterance(text);u.lang=profile.language==='en'?'en-US':'de-DE';u.rate=1.1;u.volume=Math.max(0,Math.min(1,profile.volume));const timer=setTimeout(()=>{window.speechSynthesis.cancel();resolve()},30000);u.onend=()=>{clearTimeout(timer);resolve()};u.onerror=()=>{clearTimeout(timer);setNotice('Auch die Ersatzstimme konnte nicht abgespielt werden.');resolve()};window.speechSynthesis.cancel();setPhase('SPEAKING');window.speechSynthesis.speak(u)})
       }else setNotice('Sprachausgabe fehlgeschlagen: '+(error instanceof Error?error.message:String(error)))
       if(ticket===sequence.current)setPhase('STANDBY')
     }}
