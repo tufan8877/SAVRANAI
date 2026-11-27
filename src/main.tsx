@@ -604,9 +604,10 @@ function Assistant(){
   useEffect(()=>{
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
     const native=(window as Window & {coreDesktop?:{nativeVoice?:(enabled:boolean|'command')=>Promise<void>;onNativeVoice?:(callback:(value:string)=>void)=>()=>void}}).coreDesktop
-    if(native?.nativeVoice&&native.onNativeVoice){
+    const commandCapture=Boolean(native?.nativeVoice&&Date.now()<followupUntil.current)
+    if(native?.nativeVoice&&native.onNativeVoice&&!commandCapture){
       let active=true, retry:ReturnType<typeof setTimeout>|undefined
-      const start=()=>{if(active)void native.nativeVoice!(Date.now()<followupUntil.current?'command':true).catch(error=>{if(active){setNotice(messageFor(error));setHandsFree(false)}})}
+      const start=()=>{if(active)void native.nativeVoice!(true).catch(error=>{if(active){setNotice(messageFor(error));setHandsFree(false)}})}
       setRecognitionReady(false)
       const off=native.onNativeVoice(value=>{
         if(!active)return
@@ -626,9 +627,12 @@ function Assistant(){
     if(desktopLocal){
       let active=true,stream:MediaStream|undefined,ctx:AudioContext|undefined,source:MediaStreamAudioSourceNode|undefined,silent:GainNode|undefined,rec:MediaRecorder|undefined,timer:ReturnType<typeof setInterval>|undefined
       const controller=new AbortController()
+      let commandTimeout:ReturnType<typeof setTimeout>|undefined
       setRecognitionReady(false)
       void (async()=>{
         try{
+          if(commandCapture)await native!.nativeVoice!(false)
+          if(!active)return
           stream=await navigator.mediaDevices.getUserMedia({audio:{...(micId?{deviceId:{exact:micId}}:{}),echoCancellation:false,noiseSuppression:false,autoGainControl:false}})
           const devices=await navigator.mediaDevices.enumerateDevices()
           if(active)setMicDevices(devices.filter(d=>d.kind==='audioinput'))
@@ -642,6 +646,7 @@ function Assistant(){
           const samples=new Float32Array(1024)
           let started=0,lastVoice=0,pending=false,failures=0,lastMeter=0
           setRecognitionReady(true)
+          if(commandCapture){setVoiceTrace('Ich höre zu – Whisper bereit');commandTimeout=setTimeout(()=>{if(active&&!rec&&!pending){followupUntil.current=0;setAwaitingCommand(false);setPhase('ERROR')}},30000)}
           timer=setInterval(()=>{
             if(!active||pending)return
             analyser.getFloatTimeDomainData(samples)
@@ -653,6 +658,7 @@ function Assistant(){
             setRecognitionReady(true)
             if(loud)lastVoice=now
             if(!rec&&loud){
+              clearTimeout(commandTimeout)
               const chunks:Blob[]=[]
               const recorder=new MediaRecorder(stream!,{mimeType:'audio/webm;codecs=opus'})
               rec=recorder;started=now;setVoiceTrace('Sprache erkannt – Aufnahme läuft')
@@ -666,7 +672,7 @@ function Assistant(){
                 void api('transcribe?language='+(profile.language==='en'?'en':'de'),session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob}).then(r=>r.json()).then(({text})=>{
                   if(!active)return
                   failures=0
-                  if(typeof text==='string'&&text.trim()){setVoiceTrace('Erkannt: '+text.trim());latestVoice.current(text.trim());lastMeter=Date.now()+5000}else{setVoiceTrace('Transkription leer');lastMeter=Date.now()+5000}
+                  if(typeof text==='string'&&text.trim()){setVoiceTrace('Erkannt: '+text.trim());if(commandCapture){followupUntil.current=0;setAwaitingCommand(false);void send(text.trim(),undefined,true)}else latestVoice.current(text.trim());lastMeter=Date.now()+5000}else{setVoiceTrace('Transkription leer');lastMeter=Date.now()+5000}
                 }).catch(error=>{if(active){setNotice('Desktop-Spracherkennung: '+messageFor(error));setVoiceTrace('Transkription fehlgeschlagen: '+messageFor(error));lastMeter=Date.now()+10000;if(++failures>=3)setHandsFree(false)}}).finally(()=>{pending=false})
               }
               try{recorder.start()}catch(error){rec=undefined;setNotice('Aufnahme fehlgeschlagen: '+messageFor(error));setHandsFree(false)}
@@ -674,7 +680,7 @@ function Assistant(){
           },40)
         }catch(error){if(active){setNotice('Desktop-Mikrofon: '+messageFor(error));setHandsFree(false)}}
       })()
-      return ()=>{active=false;controller.abort();clearInterval(timer);if(rec?.state==='recording')rec.stop();source?.disconnect();silent?.disconnect();stream?.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')void ctx.close().catch(()=>{});setRecognitionReady(false)}
+      return ()=>{active=false;controller.abort();clearTimeout(commandTimeout);clearInterval(timer);if(rec?.state==='recording')rec.stop();source?.disconnect();silent?.disconnect();stream?.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')void ctx.close().catch(()=>{});setRecognitionReady(false)}
     }
     const browser=window as unknown as {SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition}
     const Constructor=browser.SpeechRecognition||browser.webkitSpeechRecognition
