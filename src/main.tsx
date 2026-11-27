@@ -435,6 +435,24 @@ function Assistant(){
       return
     }
     const command=clean.toLowerCase().replace(/[.!?]$/,'')
+    const inspectUI=/^(?:zeige|erkenne|analysiere) (?:die )?bedienelemente(?: des fensters)?$/.test(command)
+    const invokeUI=clean.match(/^(?:betätige|klicke auf) (?:die schaltfläche )?["„]?(.{1,200}?)["“]?[.!?]?$/i)
+    if(inspectUI||invokeUI){
+      if(!local?.control){setNotice('CORE UI Automation benötigt die aktuelle Windows-Desktopversion.');setPhase('STANDBY');return}
+      const action:Record<string,string>=inspectUI?{kind:'uia-inspect'}:{kind:'uia-invoke',name:invokeUI![1]}
+      const ticket=existingTicket??++sequence.current
+      engine.current.stopSpeech();setPhase('PROCESSING');setInput('');setNotice('')
+      try{
+        const result=await local.control(action)
+        if(ticket!==sequence.current)return
+        let answer=result
+        if(inspectUI){try{const parsed=JSON.parse(result);const entries=Array.isArray(parsed)?parsed:[parsed];answer=entries.map((e:{Name:string;Type:string;Invokable:boolean})=>e.Name+' – '+e.Type+(e.Invokable?' (betätigbar)':'')).join('\n')}catch{}}
+        setMessages(previous=>[...previous,{role:'user',content:clean},{role:'assistant',content:answer}])
+        if(forceSpeech||handsFree||profile.speech)await speak(inspectUI?'Bedienelemente wurden im Chat angezeigt.':answer,ticket)
+      }catch(error){if(ticket===sequence.current)report(error)}
+      finally{if(ticket===sequence.current){if(handsFree){followupUntil.current=Date.now()+30000;setAwaitingCommand(true)}setPhase('STANDBY')}}
+      return
+    }
     const windowCommand=command.match(/^(schließe|minimiere|maximiere) (?:das |dieses |aktive |aktuelle )*(?:fenster|programm)$/)
     const switchWindow=/^(?:wechsle|wechsel) (?:das fenster|zum anderen fenster|zum nächsten fenster)$/.test(command)
     const typeText=clean.match(/^(?:tippe|schreibe|füge ein):\s*([\s\S]+)$/i)
