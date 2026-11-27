@@ -13,7 +13,7 @@
     "files": [
       "main.cjs",
       "preload.cjs",
-      "test-config.json"
+      "ui/**/*"
     ],
     "win": {
       "target": "nsis",
