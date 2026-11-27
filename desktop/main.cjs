@@ -109,6 +109,23 @@ else{
  const apps={notepad:'notepad.exe',calculator:'calc.exe',explorer:'explorer.exe'};
  if(!action||typeof action!=='object')throw new Error('Ungültige Aktion');
  const kind=action.kind;
+ if(kind==='uia-inspect'||kind==='uia-invoke'){
+ if(kind==='uia-invoke'&&(typeof action.name!=='string'||!action.name.trim()||action.name.length>200))throw new Error('Ungültiger Elementname.');
+ localBusy=true;
+ try{
+ const consent=await dialog.showMessageBox(win,{type:'warning',title:'CORE UI Automation',message:kind==='uia-inspect'?'Bedienelemente des Zielfensters lesen?':'Schaltfläche betätigen: '+action.name+'?',detail:'Wähle innerhalb von 3 Sekunden das gewünschte Fenster. Nur sichtbare, aktivierte Elemente werden berücksichtigt. Bei der Analyse werden Elementnamen lokal angezeigt.',buttons:['Abbrechen','Erlauben'],defaultId:0,cancelId:0});
+ if(consent.response!==1)return 'Aktion abgebrochen.';
+ win.hide();
+ try{
+ await new Promise(resolve=>setTimeout(resolve,3000));
+ const prefix="Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class CoreUIA { [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); }'; $h=[CoreUIA]::GetForegroundWindow(); if($h -eq [IntPtr]::Zero){throw 'Kein Zielfenster'}; $root=[System.Windows.Automation.AutomationElement]::FromHandle($h); if($null -eq $root){throw 'Fenster nicht zugänglich'}; $walker=[System.Windows.Automation.TreeWalker]::ControlViewWalker; $queue=New-Object 'System.Collections.Generic.Queue[System.Windows.Automation.AutomationElement]'; $queue.Enqueue($root); $items=@(); $count=0; while($queue.Count -gt 0 -and $count -lt 500){$e=$queue.Dequeue(); $count++; try{if($e.Current.IsEnabled -and -not $e.Current.IsOffscreen -and $e.Current.Name){$items+= $e}; $child=$walker.GetFirstChild($e); while($null -ne $child -and $queue.Count -lt 500){$queue.Enqueue($child); $child=$walker.GetNextSibling($child)}}catch{}}; ";
+ const inspect="$items | Select-Object -First 100 | ForEach-Object { [PSCustomObject]@{Name=$_.Current.Name; Type=$_.Current.ControlType.ProgrammaticName; Invokable=$_.GetSupportedPatterns().Id -contains [System.Windows.Automation.InvokePattern]::Pattern.Id} } | ConvertTo-Json -Compress";
+ const invoke="$name=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+Buffer.from(action.name||'','utf8').toString('base64')+"')); $matches=@($items | Where-Object {$_.Current.Name -eq $name -and $_.GetSupportedPatterns().Id -contains [System.Windows.Automation.InvokePattern]::Pattern.Id}); if($matches.Count -ne 1){throw 'Element fehlt oder ist nicht eindeutig'}; if([CoreUIA]::GetForegroundWindow() -ne $h){throw 'Zielfenster gewechselt'}; $matches[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Write-Output 'UIA-Aufruf ausgeführt. Ergebnis bitte prüfen.'";
+ const {stdout}=await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "+prefix+(kind==='uia-inspect'?inspect:invoke)],{timeout:20000,windowsHide:true,maxBuffer:512*1024});
+ return stdout.trim().slice(0,16000)||'Keine zugänglichen Bedienelemente gefunden.';
+ }finally{if(!win.isDestroyed())win.showInactive()}
+ }finally{localBusy=false}
+ }
  if(kind==='window'||kind==='type'){
  const operations=['close','minimize','maximize','switch'];
  if(kind==='window'&&!operations.includes(action.operation))throw new Error('Fensteraktion nicht erlaubt.');
