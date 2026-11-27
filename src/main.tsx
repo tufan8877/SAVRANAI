@@ -628,6 +628,7 @@ function Assistant(){
       let active=true,stream:MediaStream|undefined,ctx:AudioContext|undefined,source:MediaStreamAudioSourceNode|undefined,silent:GainNode|undefined,rec:MediaRecorder|undefined,timer:ReturnType<typeof setInterval>|undefined
       const controller=new AbortController()
       let commandTimeout:ReturnType<typeof setTimeout>|undefined
+      let captureDeadline=0
       setRecognitionReady(false)
       void (async()=>{
         try{
@@ -646,7 +647,7 @@ function Assistant(){
           const samples=new Float32Array(1024)
           let started=0,lastVoice=0,pending=false,failures=0,lastMeter=0
           setRecognitionReady(true)
-          if(commandCapture){setVoiceTrace('Ich höre zu – Whisper bereit');commandTimeout=setTimeout(()=>{if(active&&!rec&&!pending){followupUntil.current=0;setAwaitingCommand(false);setPhase('ERROR')}},30000)}
+          if(commandCapture){setVoiceTrace('Ich höre zu – Whisper bereit');captureDeadline=Date.now()+30000;commandTimeout=setInterval(()=>{if(active&&!rec&&!pending&&Date.now()>=captureDeadline){followupUntil.current=0;setAwaitingCommand(false);setPhase(old=>old==='ERROR'?'STANDBY':'ERROR')}},500)}
           timer=setInterval(()=>{
             if(!active||pending)return
             analyser.getFloatTimeDomainData(samples)
@@ -658,21 +659,20 @@ function Assistant(){
             setRecognitionReady(true)
             if(loud)lastVoice=now
             if(!rec&&loud){
-              clearTimeout(commandTimeout)
               const chunks:Blob[]=[]
-              const recorder=new MediaRecorder(stream!,{mimeType:'audio/webm;codecs=opus'})
+              const recorder=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?new MediaRecorder(stream!,{mimeType:'audio/webm;codecs=opus'}):new MediaRecorder(stream!)
               rec=recorder;started=now;setVoiceTrace('Sprache erkannt – Aufnahme läuft')
               recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}
               recorder.onstop=()=>{
                 rec=undefined
                 if(!active)return
                 const blob=new Blob(chunks,{type:recorder.mimeType})
-                if(blob.size<1000){setVoiceTrace('Aufnahme zu kurz: '+blob.size+' Bytes');return}
+                if(blob.size<1000){setVoiceTrace('Aufnahme zu kurz – bitte erneut sprechen');return}
                 pending=true;setVoiceTrace('Aufnahme: '+blob.size+' Bytes – Transkription läuft')
                 void api('transcribe?language='+(profile.language==='en'?'en':'de'),session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob}).then(r=>r.json()).then(({text})=>{
                   if(!active)return
                   failures=0
-                  if(typeof text==='string'&&text.trim()){setVoiceTrace('Erkannt: '+text.trim());if(commandCapture){followupUntil.current=0;setAwaitingCommand(false);void send(text.trim(),undefined,true)}else latestVoice.current(text.trim());lastMeter=Date.now()+5000}else{setVoiceTrace('Transkription leer');lastMeter=Date.now()+5000}
+                  if(typeof text==='string'&&text.trim()){setVoiceTrace('Erkannt: '+text.trim());if(commandCapture){followupUntil.current=0;setAwaitingCommand(false);if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(text.trim()))stopAssistant();else void send(text.trim(),undefined,true)}else latestVoice.current(text.trim());lastMeter=Date.now()+5000}else{setVoiceTrace('Transkription leer');lastMeter=Date.now()+5000}
                 }).catch(error=>{if(active){setNotice('Desktop-Spracherkennung: '+messageFor(error));setVoiceTrace('Transkription fehlgeschlagen: '+messageFor(error));lastMeter=Date.now()+10000;if(++failures>=3)setHandsFree(false)}}).finally(()=>{pending=false})
               }
               try{recorder.start()}catch(error){rec=undefined;setNotice('Aufnahme fehlgeschlagen: '+messageFor(error));setHandsFree(false)}
@@ -680,7 +680,7 @@ function Assistant(){
           },40)
         }catch(error){if(active){setNotice('Desktop-Mikrofon: '+messageFor(error));setHandsFree(false)}}
       })()
-      return ()=>{active=false;controller.abort();clearTimeout(commandTimeout);clearInterval(timer);if(rec?.state==='recording')rec.stop();source?.disconnect();silent?.disconnect();stream?.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')void ctx.close().catch(()=>{});setRecognitionReady(false)}
+      return ()=>{active=false;controller.abort();clearInterval(commandTimeout);clearInterval(timer);if(rec?.state==='recording')rec.stop();source?.disconnect();silent?.disconnect();stream?.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')void ctx.close().catch(()=>{});setRecognitionReady(false)}
     }
     const browser=window as unknown as {SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition}
     const Constructor=browser.SpeechRecognition||browser.webkitSpeechRecognition
