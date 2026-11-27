@@ -603,18 +603,20 @@ function Assistant(){
   }
   useEffect(()=>{
     if(!handsFree||(phase!=='STANDBY'&&phase!=='ERROR')||!online)return
-    const native=(window as Window & {coreDesktop?:{nativeVoice?:(enabled:boolean)=>Promise<void>;onNativeVoice?:(callback:(value:string)=>void)=>()=>void}}).coreDesktop
+    const native=(window as Window & {coreDesktop?:{nativeVoice?:(enabled:boolean|'command')=>Promise<void>;onNativeVoice?:(callback:(value:string)=>void)=>()=>void}}).coreDesktop
     if(native?.nativeVoice&&native.onNativeVoice){
       let active=true, retry:ReturnType<typeof setTimeout>|undefined
-      const start=()=>{if(active)void native.nativeVoice!(true).catch(error=>{if(active){setNotice(messageFor(error));setHandsFree(false)}})}
+      const start=()=>{if(active)void native.nativeVoice!(Date.now()<followupUntil.current?'command':true).catch(error=>{if(active){setNotice(messageFor(error));setHandsFree(false)}})}
       setRecognitionReady(false)
       const off=native.onNativeVoice(value=>{
         if(!active)return
         if(value==='READY'){setRecognitionReady(true);setVoiceTrace('Windows-Spracherkennung lokal bereit')}
         else if(value.startsWith('LEVEL:')){setVoiceTrace('Windows Mikrofonpegel: '+value.slice(6)+' %')}
         else if(value.startsWith('MATCH:')){setVoiceTrace('Windows erkannt: '+value.slice(6))}
-        else if(value==='WAKE'||value==='LISTEN'){setAwaitingCommand(true);setVoiceTrace('Hey Core erkannt – bitte sprechen')}
-        else if(value.startsWith('TEXT:')){setAwaitingCommand(false);setVoiceTrace('Erkannt: '+value.slice(5));void send(value.slice(5),undefined,true)}
+        else if(value==='WAKE'){followupUntil.current=Date.now()+30000;setAwaitingCommand(true);setVoiceTrace('Hey Core erkannt – Sprachausgabe');void native.nativeVoice!(false).catch(()=>{});const ticket=++sequence.current;void speak('Ja, ich höre zu.',ticket).finally(()=>{if(ticket===sequence.current){followupUntil.current=Date.now()+30000;setPhase('STANDBY')}})}
+        else if(value==='LISTEN'){setRecognitionReady(true);setAwaitingCommand(true);setVoiceTrace('Ich höre zu – bitte sprechen')}
+        else if(value==='EMPTY'){followupUntil.current=0;setAwaitingCommand(false)}
+        else if(value.startsWith('TEXT:')){followupUntil.current=0;setAwaitingCommand(false);setVoiceTrace('Erkannt: '+value.slice(5));void send(value.slice(5),undefined,true)}
         else if(value.startsWith('ERROR:')){setNotice(value.slice(6));setHandsFree(false)}
         else if(value==='END'){setAwaitingCommand(false);retry=setTimeout(start,500)}
       })
