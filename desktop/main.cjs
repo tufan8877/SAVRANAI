@@ -5,7 +5,22 @@ const {execFile,spawn}=require('node:child_process');
 const {promisify}=require('node:util');
 const run=promisify(execFile);
 let localBusy=false;
-const url=require('./test-config.json').url;
+const {protocol,net}=require('electron');
+const {pathToFileURL}=require('node:url');
+const url='https://savranai.onrender.com';
+const uiRoot=path.join(__dirname,'ui');
+async function localUI(request){
+ const u=new URL(request.url);
+ if(u.origin!==url)return new Response('Forbidden',{status:403});
+ if(u.pathname.startsWith('/api/'))return net.fetch(request,{bypassCustomProtocolHandlers:true});
+ if(request.method!=='GET')return new Response('Method not allowed',{status:405});
+ let relative;
+ try{relative=decodeURIComponent(u.pathname).replace(/^\/+/, '')||'index.html'}catch{return new Response('Bad request',{status:400})}
+ const file=path.resolve(uiRoot,relative);
+ if(!file.startsWith(uiRoot+path.sep))return new Response('Forbidden',{status:403});
+ try{if(!(await fs.stat(file)).isFile())throw Error('not file');return net.fetch(pathToFileURL(file).href)}
+ catch{return new Response('Not found',{status:404})}
+}
 let logQueue=Promise.resolve();
 function diagnostic(event){const line=new Date().toISOString()+' '+event+'\n';logQueue=logQueue.then(async()=>{const file=path.join(app.getPath('userData'),'diagnostics.log');const stat=await fs.stat(file).catch(()=>null);if(stat&&stat.size>512000)await fs.rename(file,file+'.old').catch(()=>{});await fs.appendFile(file,line,'utf8')}).catch(()=>{})}
 const trusted=u=>{try{return new URL(u).origin===url}catch{return false}};
@@ -24,6 +39,7 @@ else{
  app.whenReady().then(()=>{
  diagnostic('APP_READY');
  const ses=session.defaultSession;
+ ses.protocol.handle('https',localUI);
  ses.setPermissionRequestHandler((wc,permission,callback,details)=>callback(trusted(details.requestingUrl||wc.getURL())&&permission==='media'&&Array.isArray(details.mediaTypes)&&details.mediaTypes.length>0&&details.mediaTypes.every(t=>t==='audio')));
  ses.setPermissionCheckHandler((wc,permission,origin,details)=>trusted(origin)&&permission==='media'&&details.mediaType==='audio');
  win=new BrowserWindow({width:1100,height:850,minWidth:360,minHeight:500,autoHideMenuBar:true,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,preload:path.join(__dirname,'preload.cjs')}});
