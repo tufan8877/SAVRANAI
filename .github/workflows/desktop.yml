@@ -1,8 +1,8 @@
-name: CORE isolated stability test
+name: CORE BYOK beta build
 on:
   workflow_dispatch:
   push:
-    branches: [stability-v1]
+    branches: [byok-v2.2]
 permissions:
   contents: write
 jobs:
@@ -39,15 +39,15 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v4
         with:
-          name: CORE-Test-2.1.0
+          name: CORE-BYOK-2.2.0
           path: desktop/dist/*.exe
       - name: Publish public beta
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view desktop-v2.1.0-beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload desktop-v2.1.0-beta desktop/dist/*.exe --clobber --repo "$GITHUB_REPOSITORY"
+          if gh release view desktop-v2.2.0-beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload desktop-v2.2.0-beta desktop/dist/*.exe --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create desktop-v2.1.0-beta desktop/dist/*.exe --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title "CORE 2.1.0 Beta" --notes "Separate Windows test version. Runtime stability not yet verified. Uses existing production API."
+            gh release create desktop-v2.2.0-beta desktop/dist/*.exe --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title "CORE 2.2.0 Beta" --notes "Separate BYOK Windows beta. Runtime and provider connectivity not yet verified."
           fi
