@@ -9,10 +9,32 @@ const {protocol,net}=require('electron');
 const {pathToFileURL}=require('node:url');
 const url='https://savranai.onrender.com';
 const uiRoot=path.join(__dirname,'ui');
+
+async function localAPI(request,u){
+ const json=(data,status=200)=>Response.json(data,{status});
+ const fail=(message,status=400)=>json({error:{message}},status);
+ try{
+ const keys=JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'provider-keys.json'),'utf8').catch(e=>{if(e.code==='ENOENT')return '{}';throw e}));
+ const key=name=>keys[name]&&safeStorage.isEncryptionAvailable()?safeStorage.decryptString(Buffer.from(keys[name],'base64')):'';
+ if(u.pathname==='/api/config')return json({guest:true,auth:false,chat:!!keys.groq,speech:!!keys.elevenlabs,accountDeletion:false,model:'openai/gpt-oss-120b',voices:[{id:'pNInz6obpgDQGcFmaJgB',name:'CORE'}],integrations:[]});
+ if(request.method!=='POST')return fail('Lokale Schnittstelle nicht verfügbar',404);
+ if(u.pathname==='/api/chat'){
+ const token=key('groq');if(!token)return fail('Bitte zuerst einen Groq API-Schlüssel hinterlegen.');
+ const body=await request.json();if(typeof body.text!=='string'||body.text.length>24000)return fail('Ungültige Nachricht');
+ const history=Array.isArray(body.history)?body.history.filter(m=>m&&['user','assistant'].includes(m.role)&&typeof m.content==='string').slice(-12).map(m=>({role:m.role,content:m.content.slice(0,8000)})):[];
+ const response=await net.fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',bypassCustomProtocolHandlers:true,redirect:'error',signal:AbortSignal.timeout(45000),headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({model:'openai/gpt-oss-120b',messages:[{role:'system',content:'Du bist CORE, ein präziser persönlicher Assistent. Antworte direkt, normalerweise in ein bis drei Sätzen. Erfinde keine Fakten oder ausgeführten Aktionen.'},...history,{role:'user',content:body.text}],max_completion_tokens:2048})});
+ if(!response.ok)return fail('Groq meldet HTTP '+response.status,502);
+ const data=await response.json();const answer=data.choices?.[0]?.message?.content;if(typeof answer!=='string'||!answer.trim())return fail('Keine KI-Antwort erhalten',502);
+ return new Response(JSON.stringify({delta:answer})+'\n'+JSON.stringify({done:true})+'\n',{headers:{'Content-Type':'application/x-ndjson'}});
+ }
+ return fail('Diese Funktion ist im lokalen Modus noch nicht verfügbar.',501);
+ }catch{return fail('Lokale API-Anfrage fehlgeschlagen. Prüfe Schlüssel und Internetverbindung.',502)}
+}
+
 async function localUI(request){
  const u=new URL(request.url);
  if(u.origin!==url)return new Response('Forbidden',{status:403});
- if(u.pathname.startsWith('/api/'))return net.fetch(request,{bypassCustomProtocolHandlers:true});
+ if(u.pathname.startsWith('/api/'))return localAPI(request,u);
  if(request.method!=='GET')return new Response('Method not allowed',{status:405});
  let relative;
  try{relative=decodeURIComponent(u.pathname).replace(/^\/+/, '')||'index.html'}catch{return new Response('Bad request',{status:400})}
