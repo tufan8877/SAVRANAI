@@ -18,6 +18,24 @@ async function localAPI(request,u){
  const key=name=>keys[name]&&safeStorage.isEncryptionAvailable()?safeStorage.decryptString(Buffer.from(keys[name],'base64')):'';
  if(u.pathname==='/api/config')return json({guest:true,auth:false,chat:!!keys.groq,speech:!!keys.elevenlabs,accountDeletion:false,model:'openai/gpt-oss-120b',voices:[{id:'pNInz6obpgDQGcFmaJgB',name:'CORE'}],integrations:[]});
  if(request.method!=='POST')return fail('Lokale Schnittstelle nicht verfügbar',404);
+
+ if(u.pathname==='/api/transcribe'){
+ const token=key('groq');if(!token)return fail('Groq API-Schlüssel fehlt.');
+ const audio=await request.arrayBuffer();if(!audio.byteLength||audio.byteLength>10*1024*1024)return fail('Ungültige Audioaufnahme');
+ const bytes=new Uint8Array(audio);const mp4=String.fromCharCode(...bytes.slice(4,8))==='ftyp';const ogg=String.fromCharCode(...bytes.slice(0,4))==='OggS';const ext=mp4?'mp4':ogg?'ogg':'webm';
+ const form=new FormData();form.append('file',new Blob([audio],{type:'audio/'+ext}),'recording.'+ext);form.append('model','whisper-large-v3-turbo');form.append('language',u.searchParams.get('language')==='en'?'en':'de');
+ const response=await net.fetch('https://api.groq.com/openai/v1/audio/transcriptions',{method:'POST',bypassCustomProtocolHandlers:true,redirect:'error',signal:AbortSignal.timeout(45000),headers:{Authorization:'Bearer '+token},body:form});
+ if(!response.ok)return fail('Spracherkennung: Groq HTTP '+response.status,502);
+ const data=await response.json();return json({text:typeof data.text==='string'?data.text:''});
+ }
+ if(u.pathname==='/api/speech'){
+ const token=key('elevenlabs');if(!token)return fail('ElevenLabs API-Schlüssel fehlt.');
+ const body=await request.json();if(typeof body.text!=='string'||!body.text.trim()||body.text.length>4000)return fail('Ungültiger Sprachtext');
+ const voice=typeof body.voice==='string'&&/^[a-zA-Z0-9]{10,40}$/.test(body.voice)?body.voice:'pNInz6obpgDQGcFmaJgB';
+ const response=await net.fetch('https://api.elevenlabs.io/v1/text-to-speech/'+encodeURIComponent(voice)+'/stream?output_format=pcm_24000',{method:'POST',bypassCustomProtocolHandlers:true,redirect:'error',signal:AbortSignal.timeout(45000),headers:{'xi-api-key':token,'Content-Type':'application/json'},body:JSON.stringify({text:body.text,model_id:'eleven_multilingual_v2',voice_settings:{stability:0.42,similarity_boost:0.75}})});
+ if(!response.ok)return fail('Sprachausgabe: ElevenLabs HTTP '+response.status,502);
+ return new Response(response.body,{headers:{'Content-Type':'application/octet-stream'}});
+ }
  if(u.pathname==='/api/chat'){
  const token=key('groq');if(!token)return fail('Bitte zuerst einen Groq API-Schlüssel hinterlegen.');
  const body=await request.json();if(typeof body.text!=='string'||body.text.length>24000)return fail('Ungültige Nachricht');
