@@ -862,11 +862,30 @@ function Assistant(){
 }
 
 function Impressum(){return <div style={{position:'fixed',inset:0,overflowY:'auto',background:'#080705',color:'#f1d2a5',fontFamily:'system-ui,sans-serif'}}><main style={{maxWidth:820,margin:'0 auto',padding:'40px 24px 64px',lineHeight:1.75}}><a href={new URLSearchParams(location.search).get("app")==="1"?"/?app=1":"/"} style={{color:'#efae5d',fontSize:14}}>Zurück</a><p style={{letterSpacing:3,fontSize:13,marginTop:32}}>INTEL AI CORE</p><h1>Impressum</h1><section><h2>Anbieter und Kontakt</h2><p>Name: Tufan<br/>E-Mail: <a style={{color:'#efae5d',overflowWrap:'anywhere'}} href="mailto:tufandonmezyurek@gmail.com">tufandonmezyurek@gmail.com</a><br/>Website: intelaicore.org</p></section><section><h2>Gegenstand des Angebots</h2><p>INTEL AI CORE wird als Webanwendung sowie als Desktop-Anwendung für Windows angeboten. INTEL AI CORE ist ein KI-gestützter digitaler Assistent zur Unterstützung bei allgemeinen und geschäftlichen Aufgaben. Einzelne Funktionen befinden sich in Entwicklung und Erprobung.</p></section><section><h2>Hinweise zur KI-Nutzung</h2><p>KI-generierte Antworten können unvollständig, fehlerhaft oder veraltet sein. Prüfe wichtige Informationen und Entwürfe vor ihrer Verwendung. Die Anwendung ersetzt keine individuelle medizinische, rechtliche, steuerliche oder sonstige fachliche Beratung.</p></section><section><h2>Haftung und Verfügbarkeit</h2><p>Eine durchgehende Verfügbarkeit und Fehlerfreiheit des Angebots kann nicht zugesichert werden. Es gelten die gesetzlichen Haftungsbestimmungen. Zwingende Verbraucherrechte bleiben unberührt.</p></section><section><h2>Externe Links</h2><p>Verlinkte Angebote Dritter liegen außerhalb unseres unmittelbaren Einflussbereichs. Hinweise auf rechtswidrige Inhalte können an die oben genannte Kontaktadresse gemeldet werden.</p></section><section><h2>Urheberrecht</h2><p>Für Inhalte, Gestaltung und Software gelten die jeweiligen gesetzlichen Schutzrechte und Lizenzbedingungen. Rechte Dritter bleiben unberührt.</p></section><section><h2>Hinweise zur Datenverarbeitung</h2><p>Zur Bereitstellung des Assistenten können Texte, Sprachdaten und freiwillig übermittelte Bilder an externe KI-Dienste wie Groq, ElevenLabs oder Fish Audio übertragen werden. Bitte übermittle keine Zugangsdaten oder vertraulichen Informationen ohne entsprechende Berechtigung. Diese allgemeinen Hinweise ersetzen keine vollständige Datenschutzerklärung.</p></section></main></div>}
+
+type KeyStatus={available:boolean;providers:{provider:string;configured:boolean}[]}
+function DesktopSetup(){
+ const bridge=(window as Window & {coreDesktop?:{keys?:(action:{kind:string;provider?:string;key?:string})=>Promise<KeyStatus>}}).coreDesktop?.keys
+ const [status,setStatus]=useState<KeyStatus>()
+ const [values,setValues]=useState<Record<string,string>>({})
+ const [error,setError]=useState('')
+ const [busy,setBusy]=useState(false)
+ const [done,setDone]=useState(false)
+ useEffect(()=>{if(bridge)void bridge({kind:'status'}).then(s=>{setStatus(s);setDone(s.providers.some(p=>p.provider==='groq'&&p.configured))}).catch(()=>setError('Schlüsselspeicher nicht verfügbar.'))},[bridge])
+ if(!bridge)return <Assistant/>
+ async function change(provider:string,kind:'save'|'remove'){
+  if(!bridge)return;setBusy(true);setError('')
+  try{setStatus(await bridge({kind,provider,...(kind==='save'?{key:values[provider]||''}:{})}));setValues(v=>({...v,[provider]:''}))}catch{setError('Schlüssel konnte nicht gespeichert oder entfernt werden.')}finally{setBusy(false)}
+ }
+ if(done)return <><Assistant/><button className="action-btn" style={{position:'fixed',bottom:42,right:12,zIndex:900}} onClick={()=>setDone(false)}>API-Schlüssel</button></>
+ return <main style={{position:'fixed',inset:0,overflow:'auto',background:'#080705',color:'#f1d2a5',padding:24}}><section style={{maxWidth:540,margin:'30px auto',display:'grid',gap:16}}><h1>CORE – persönliche Einrichtung</h1><p>Deine Schlüssel bleiben verschlüsselt auf diesem PC. Anfragen werden direkt an den jeweiligen Anbieter gesendet. Der Anbieter kann Kosten berechnen.</p>{['groq','gemini','elevenlabs','tavily'].map(provider=><section key={provider} style={{border:'1px solid #493521',padding:16,borderRadius:10,display:'grid',gap:8}}><strong>{provider} {provider==='groq'?'(erforderlich)':'(optional, noch nicht verbunden)'}</strong><span>{status?.providers.find(p=>p.provider===provider)?.configured?'Gespeichert':'Nicht eingerichtet'}</span><input type="password" autoComplete="off" aria-label={provider+' API-Schlüssel'} value={values[provider]||''} onChange={e=>setValues(v=>({...v,[provider]:e.target.value}))}/><button className="action-btn" disabled={busy||!status?.available||!values[provider]} onClick={()=>void change(provider,'save')}>Speichern</button><button className="action-btn" disabled={busy||!status?.providers.find(p=>p.provider===provider)?.configured} onClick={()=>void change(provider,'remove')}>Entfernen</button></section>)}<p role="status">{error}</p><button className="action-btn" disabled={busy||!status?.providers.some(p=>p.provider==='groq'&&p.configured)} onClick={()=>setDone(true)}>CORE starten</button></section></main>
+}
+
 function App(){
  const desktopVersion=useDesktopRelease()
  const [assistant,setAssistant]=useState(()=>new URLSearchParams(location.search).get('app')==='1'||matchMedia('(display-mode: standalone)').matches)
  if(location.pathname.replace(/\/$/,'')==='/impressum'||new URLSearchParams(location.search).get('page')==='impressum')return <Impressum/>
- if(assistant)return <Assistant/>
+ if(assistant)return <DesktopSetup/>
  return <div style={{minHeight:'100dvh',overflowY:'auto',background:'#080705',color:'#f1d2a5',fontFamily:'system-ui,sans-serif',position:'fixed',inset:0}}>
  <header style={{maxWidth:1120,margin:'auto',padding:'24px clamp(20px,5vw,64px)',display:'flex',justifyContent:'space-between',alignItems:'center',gap:16,flexWrap:'wrap'}}><strong style={{letterSpacing:3}}>INTEL AI CORE</strong><button className="action-btn" onClick={()=>setAssistant(true)}>Webversion öffnen</button></header>
  <main className="landing-main">
@@ -879,4 +898,4 @@ function App(){
 }
 function LandingOrb(){const level=useRef(0);return <Orb mode="STANDBY" level={level} reduced={true}/>}
 createRoot(document.getElementById('root')!).render(<App/>)
-if(import.meta.env.PROD&&'serviceWorker' in navigator)window.addEventListener('load',()=>void navigator.serviceWorker.register('/sw.js').catch(()=>undefined))
+if(import.meta.env.PROD&&!(window as Window & {coreDesktop?:unknown}).coreDesktop&&'serviceWorker' in navigator)window.addEventListener('load',()=>void navigator.serviceWorker.register('/sw.js').catch(()=>undefined))
