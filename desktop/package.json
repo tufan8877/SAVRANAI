@@ -1,6 +1,6 @@
 {
-  "name": "intel-ai-core-test",
-  "version": "2.1.0",
+  "name": "intel-ai-core-byok",
+  "version": "2.2.0",
   "private": true,
   "main": "main.cjs",
   "devDependencies": {
@@ -8,8 +8,8 @@
     "electron-builder": "^26.0.0"
   },
   "build": {
-    "appId": "org.intelaicore.desktop.test",
-    "productName": "Intel AI Core Test",
+    "appId": "org.intelaicore.desktop.byok",
+    "productName": "Intel AI Core BYOK",
     "files": [
       "main.cjs",
       "preload.cjs",
@@ -17,7 +17,7 @@
     ],
     "win": {
       "target": "nsis",
-      "artifactName": "CORE-Test-Windows-${arch}.${ext}"
+      "artifactName": "CORE-BYOK-Windows-${arch}.${ext}"
     },
     "directories": {
       "output": "dist"
