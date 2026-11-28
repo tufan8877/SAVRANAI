@@ -7,7 +7,7 @@ const run=promisify(execFile);
 let localBusy=false;
 const {protocol,net}=require('electron');
 const {pathToFileURL}=require('node:url');
-const url='https://savranai.onrender.com';
+const url='https://core-byok.invalid';
 const uiRoot=path.join(__dirname,'ui');
 
 async function localAPI(request,u){
@@ -70,7 +70,7 @@ async function localAPI(request,u){
 async function localUI(request){
  const u=new URL(request.url);
  if(u.origin!==url)return new Response('Forbidden',{status:403});
- if(u.pathname.startsWith('/api/'))return localAPI(request,u);
+ if(u.pathname.startsWith('/api/')){if(request.headers.get('Origin')&&request.headers.get('Origin')!==url)return new Response('Forbidden',{status:403});return localAPI(request,u);}
  if(request.method!=='GET')return new Response('Method not allowed',{status:405});
  let relative;
  try{relative=decodeURIComponent(u.pathname).replace(/^\/+/, '')||'index.html'}catch{return new Response('Bad request',{status:400})}
