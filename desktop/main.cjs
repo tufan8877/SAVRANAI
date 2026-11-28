@@ -129,12 +129,22 @@ else{
  }
  ipcMain.handle('core:keys',async(event,action)=>{
    if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw Error('Nicht autorisiert');
-   if(!action||!['status','save','remove'].includes(action.kind))throw Error('Ungültige Aktion');
+   if(!action||!['status','save','remove','test'].includes(action.kind))throw Error('Ungültige Aktion');
    const job=keyQueue.then(async()=>{
      const keys=await readKeys();
      if(action.kind!=='status'){
        if(!allowedProviders.has(action.provider))throw Error('Unbekannter Anbieter');
        if(!safeStorage.isEncryptionAvailable())throw Error('Windows-Schlüsselverschlüsselung nicht verfügbar');
+       if(action.kind==='test'){
+         const encrypted=keys[action.provider];if(!encrypted)throw Error('Kein Schlüssel gespeichert');
+         const token=safeStorage.decryptString(Buffer.from(encrypted,'base64'));
+         const endpoints={groq:'https://api.groq.com/openai/v1/models',gemini:'https://generativelanguage.googleapis.com/v1beta/models',elevenlabs:'https://api.elevenlabs.io/v1/voices',tavily:'https://api.tavily.com/search'};
+         const headers=action.provider==='gemini'?{'x-goog-api-key':token}:action.provider==='elevenlabs'?{'xi-api-key':token}:{Authorization:'Bearer '+token};
+         const search=action.provider==='tavily';
+         const response=await net.fetch(endpoints[action.provider],{method:search?'POST':'GET',headers:{...headers,...(search?{'Content-Type':'application/json'}:{})},...(search?{body:JSON.stringify({query:'CORE connection test',max_results:1,search_depth:'basic'})}:{}),redirect:'error',bypassCustomProtocolHandlers:true,signal:AbortSignal.timeout(15000)});
+         await response.body?.cancel().catch(()=>{});
+         return {available:true,providers:[...allowedProviders].map(provider=>({provider,configured:!!keys[provider]})),test:{ok:response.ok,status:response.status}};
+       }
        if(action.kind==='save'){
          if(typeof action.key!=='string'||action.key.trim().length<8||action.key.length>2048||/\s/.test(action.key.trim()))throw Error('Ungültiges Schlüssel-Format');
          keys[action.provider]=safeStorage.encryptString(action.key.trim()).toString('base64');
