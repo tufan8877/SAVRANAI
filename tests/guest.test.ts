@@ -17,12 +17,13 @@ test('guest chat and voice work without Supabase or credentials from the browser
     calls++
     if(url.hostname==='api.groq.com'){
       const request=JSON.parse(String(init?.body))
-      assert.match(request.messages[0].content,/Deutsch/)
-      assert.deepEqual(request.messages.slice(1),[
+      assert.equal(request.messages[0].role,'system')
+      assert.match(request.messages.filter((m:{role:string})=>m.role==='system').map((m:{content:string})=>m.content).join(' '),/Deutsch/)
+      assert.deepEqual(request.messages.filter((m:{role:string})=>m.role!=='system'),[
         {role:'assistant',content:'Wir sprachen über Render.'},
         {role:'user',content:'Wie geht es weiter?'},
       ])
-      return new Response('data: {"choices":[{"delta":{"content":"Weiter geht es mit SAVRAN."}}]}\n\ndata: [DONE]\n\n')
+      return new Response('data: {"choices":[{"delta":{"content":"Weiter geht es mit CORE."}}]}\n\ndata: [DONE]\n\n')
     }
     assert.equal(url.hostname,'api.elevenlabs.io')
     return new Response(new Uint8Array([0,0,1,0]))
@@ -48,7 +49,7 @@ test('guest chat and voice work without Supabase or credentials from the browser
     assert.equal(response.headers.get('X-Conversation-Id'),null)
     let answer=''
     await consumeChat(response,delta=>{answer+=delta})
-    assert.equal(answer,'Weiter geht es mit SAVRAN.')
+    assert.equal(answer,'Weiter geht es mit CORE.')
     const audio=await post('speech',{text:answer})
     assert.deepEqual([...new Uint8Array(await audio.arrayBuffer())],[0,0,1,0])
     assert.equal(calls,2)

@@ -1,57 +1,53 @@
-name: CORE desktop installers
+name: CORE BYOK beta build
 on:
   workflow_dispatch:
   push:
-    paths:
-      - 'desktop/**'
-      - '.github/workflows/desktop.yml'
-concurrency:
-  group: core-desktop-release-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [byok-v2.2]
 permissions:
   contents: write
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            args: --win --x64
-    runs-on: ${{ matrix.os }}
+  verify:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check desktop JavaScript syntax
-        run: |
-          node --check desktop/main.cjs
-          node --check desktop/preload.cjs
+      - run: npm install
+      - run: npm run build
+      - run: npm test
+  build:
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check desktop/main.cjs
+      - run: node --check desktop/preload.cjs
+      - run: npm install
+      - run: npm run build
+      - name: Package local UI
+        shell: bash
+        run: cp -r dist desktop/ui
       - run: npm install
         working-directory: desktop
-      - run: npx electron-builder ${{ matrix.args }} --publish never
+      - run: npx electron-builder --win --x64 --publish never
         working-directory: desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.os }}
-          path: |
-            desktop/dist/*.exe
-  release:
-    if: github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: installers
-          merge-multiple: true
-      - env:
+          name: CORE-BYOK-2.2.0
+          path: desktop/dist/*.exe
+      - name: Publish public beta
+        shell: bash
+        env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view desktop-v1 --repo "$GITHUB_REPOSITORY" || gh release create desktop-v1 --repo "$GITHUB_REPOSITORY" --title "CORE Desktop" --notes "Unsigned desktop installers."
-          gh release upload desktop-v1 installers/* --clobber --repo "$GITHUB_REPOSITORY"
-          VERSION=$(node -p "require('./desktop/package.json').version")
-          gh release edit desktop-v1 --title "CORE Desktop v$VERSION" --repo "$GITHUB_REPOSITORY"
+          if gh release view desktop-v2.2.0-beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload desktop-v2.2.0-beta desktop/dist/*.exe --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create desktop-v2.2.0-beta desktop/dist/*.exe --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title "CORE 2.2.0 Beta" --notes "Separate BYOK Windows beta. Runtime and provider connectivity not yet verified."
+          fi

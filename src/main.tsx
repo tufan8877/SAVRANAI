@@ -256,18 +256,21 @@ function Assistant(){
   }
   async function speak(text:string,ticket=++sequence.current){
     if(ticket!==sequence.current)return
+    text=text.replace(/\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$/g,' Die Formel steht im Chat. ').replace(/\\\([\s\S]*?\\\)|(?<!\$)\$[^$\n]+\$(?!\$)/g,' (siehe Chat) ').replace(/^\s*\|.*\|\s*$/gm,'').replace(/^\s*[-:| ]{3,}\s*$/gm,'').replace(/\\(?:frac|dfrac|tfrac|sqrt|dot|mathrm|text|left|right|cdot|times|div|pi|alpha|beta|rho|Delta)\b[^\n]*/g,' Die mathematische Darstellung steht im Chat. ')
+    text=text.split(/\n\s*(?:\*\*)?Quellen(?:\*\*)?:/i)[0].replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/g,'$1').replace(/https?:\/\/[^\s]+/g,'').replace(/^\s{0,3}#{1,6}\s+/gm,'').replace(/\*\*|__|\x60/g,'').replace(/^\s*[-*•]\s+/gm,'').replace(/\bz\s*\.\s*b\s*\./gi,'zum Beispiel').replace(/\bbzw\./gi,'beziehungsweise').replace(/\bca\./gi,'ungefähr').replace(/\bd\s*\.\s*h\s*\./gi,'das heißt').replace(/\busw\./gi,'und so weiter').replace(/\bm³\s*\/\s*h\b/g,'Kubikmeter pro Stunde').replace(/\bkWh\b/g,'Kilowattstunden').replace(/\bkW\b/g,'Kilowatt').replace(/\bhPa\b/g,'Hektopascal').replace(/°\s*C/g,' Grad Celsius').replace(/€/g,' Euro').replace(/%/g,' Prozent').replace(/(\d)\s*[×*]\s*(?=\d)/g,'$1 mal ').replace(/(\d)\s*[÷/]\s*(?=\d)/g,'$1 geteilt durch ').replace(/(\d)\s*\+\s*(?=\d)/g,'$1 plus ').replace(/(\d)\s*[-−]\s*(?=\d)/g,'$1 minus ').replace(/\s*=\s*/g,' ergibt ').replace(/\s*\n+\s*/g,' ').replace(/[ \t]+/g,' ').trim()
+    if(!text)text='Die Antwort steht im Chat.'
     engine.current.stopSpeech()
     setNotice('');setPhase('PROCESSING')
     try {
       if(!config?.speech)throw new Error('KI-Sprachausgabe nicht verfügbar.')
-      await engine.current.speak(signal=>api('speech',session,{method:'POST',signal,body:JSON.stringify({text,voice:profile.voice})}),profile.volume,()=>{
+      await engine.current.speak(signal=>api('speech',session,{method:'POST',signal,body:JSON.stringify({text,voice:profile.voice,natural:true})}),profile.volume,()=>{
         if(ticket===sequence.current)setPhase('SPEAKING')
       })
       if(ticket===sequence.current)setPhase('STANDBY')
     }catch(error){if(ticket===sequence.current){
       if('speechSynthesis' in window){
         setNotice('KI-Sprachausgabe fehlgeschlagen – Systemstimme wird versucht: '+(error instanceof Error?error.message:String(error)))
-        await new Promise<void>(resolve=>{const u=new SpeechSynthesisUtterance(text);u.lang=profile.language==='en'?'en-US':'de-DE';u.volume=Math.max(0,Math.min(1,profile.volume));const timer=setTimeout(()=>{window.speechSynthesis.cancel();resolve()},30000);u.onend=()=>{clearTimeout(timer);resolve()};u.onerror=()=>{clearTimeout(timer);setNotice('Auch die Ersatzstimme konnte nicht abgespielt werden.');resolve()};window.speechSynthesis.cancel();setPhase('SPEAKING');window.speechSynthesis.speak(u)})
+        await new Promise<void>(resolve=>{const u=new SpeechSynthesisUtterance(text);u.lang=profile.language==='en'?'en-US':'de-DE';u.rate=1.1;u.volume=Math.max(0,Math.min(1,profile.volume));const timer=setTimeout(()=>{window.speechSynthesis.cancel();resolve()},30000);u.onend=()=>{clearTimeout(timer);resolve()};u.onerror=()=>{clearTimeout(timer);setNotice('Auch die Ersatzstimme konnte nicht abgespielt werden.');resolve()};window.speechSynthesis.cancel();setPhase('SPEAKING');window.speechSynthesis.speak(u)})
       }else setNotice('Sprachausgabe fehlgeschlagen: '+(error instanceof Error?error.message:String(error)))
       if(ticket===sequence.current)setPhase('STANDBY')
     }}
@@ -628,6 +631,7 @@ function Assistant(){
       let active=true,stream:MediaStream|undefined,ctx:AudioContext|undefined,source:MediaStreamAudioSourceNode|undefined,silent:GainNode|undefined,rec:MediaRecorder|undefined,timer:ReturnType<typeof setInterval>|undefined
       const controller=new AbortController()
       let commandTimeout:ReturnType<typeof setTimeout>|undefined
+      let captureDeadline=0
       setRecognitionReady(false)
       void (async()=>{
         try{
@@ -646,7 +650,7 @@ function Assistant(){
           const samples=new Float32Array(1024)
           let started=0,lastVoice=0,pending=false,failures=0,lastMeter=0
           setRecognitionReady(true)
-          if(commandCapture){setVoiceTrace('Ich höre zu – Whisper bereit');commandTimeout=setTimeout(()=>{if(active&&!rec&&!pending){followupUntil.current=0;setAwaitingCommand(false);setPhase('ERROR')}},30000)}
+          if(commandCapture){setVoiceTrace('Ich höre zu – Whisper bereit');captureDeadline=Date.now()+30000;commandTimeout=setInterval(()=>{if(active&&!rec&&!pending&&Date.now()>=captureDeadline){followupUntil.current=0;setAwaitingCommand(false);setPhase(old=>old==='ERROR'?'STANDBY':'ERROR')}},500)}
           timer=setInterval(()=>{
             if(!active||pending)return
             analyser.getFloatTimeDomainData(samples)
@@ -658,21 +662,20 @@ function Assistant(){
             setRecognitionReady(true)
             if(loud)lastVoice=now
             if(!rec&&loud){
-              clearTimeout(commandTimeout)
               const chunks:Blob[]=[]
-              const recorder=new MediaRecorder(stream!,{mimeType:'audio/webm;codecs=opus'})
+              const recorder=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?new MediaRecorder(stream!,{mimeType:'audio/webm;codecs=opus'}):new MediaRecorder(stream!)
               rec=recorder;started=now;setVoiceTrace('Sprache erkannt – Aufnahme läuft')
               recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)}
               recorder.onstop=()=>{
                 rec=undefined
                 if(!active)return
                 const blob=new Blob(chunks,{type:recorder.mimeType})
-                if(blob.size<1000){setVoiceTrace('Aufnahme zu kurz: '+blob.size+' Bytes');return}
+                if(blob.size<1000){setVoiceTrace('Aufnahme zu kurz – bitte erneut sprechen');return}
                 pending=true;setVoiceTrace('Aufnahme: '+blob.size+' Bytes – Transkription läuft')
                 void api('transcribe?language='+(profile.language==='en'?'en':'de'),session,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/octet-stream'},body:blob}).then(r=>r.json()).then(({text})=>{
                   if(!active)return
                   failures=0
-                  if(typeof text==='string'&&text.trim()){setVoiceTrace('Erkannt: '+text.trim());if(commandCapture){followupUntil.current=0;setAwaitingCommand(false);void send(text.trim(),undefined,true)}else latestVoice.current(text.trim());lastMeter=Date.now()+5000}else{setVoiceTrace('Transkription leer');lastMeter=Date.now()+5000}
+                  if(typeof text==='string'&&text.trim()){setVoiceTrace('Erkannt: '+text.trim());if(commandCapture){followupUntil.current=0;setAwaitingCommand(false);if(/^(?:stopp|stop|schlafmodus|ruhe)[.!]?$/i.test(text.trim()))stopAssistant();else void send(text.trim(),undefined,true)}else latestVoice.current(text.trim());lastMeter=Date.now()+5000}else{setVoiceTrace('Transkription leer');lastMeter=Date.now()+5000}
                 }).catch(error=>{if(active){setNotice('Desktop-Spracherkennung: '+messageFor(error));setVoiceTrace('Transkription fehlgeschlagen: '+messageFor(error));lastMeter=Date.now()+10000;if(++failures>=3)setHandsFree(false)}}).finally(()=>{pending=false})
               }
               try{recorder.start()}catch(error){rec=undefined;setNotice('Aufnahme fehlgeschlagen: '+messageFor(error));setHandsFree(false)}
@@ -680,7 +683,7 @@ function Assistant(){
           },40)
         }catch(error){if(active){setNotice('Desktop-Mikrofon: '+messageFor(error));setHandsFree(false)}}
       })()
-      return ()=>{active=false;controller.abort();clearTimeout(commandTimeout);clearInterval(timer);if(rec?.state==='recording')rec.stop();source?.disconnect();silent?.disconnect();stream?.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')void ctx.close().catch(()=>{});setRecognitionReady(false)}
+      return ()=>{active=false;controller.abort();clearInterval(commandTimeout);clearInterval(timer);if(rec?.state==='recording')rec.stop();source?.disconnect();silent?.disconnect();stream?.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')void ctx.close().catch(()=>{});setRecognitionReady(false)}
     }
     const browser=window as unknown as {SpeechRecognition?:new()=>Recognition;webkitSpeechRecognition?:new()=>Recognition}
     const Constructor=browser.SpeechRecognition||browser.webkitSpeechRecognition
@@ -859,11 +862,30 @@ function Assistant(){
 }
 
 function Impressum(){return <div style={{position:'fixed',inset:0,overflowY:'auto',background:'#080705',color:'#f1d2a5',fontFamily:'system-ui,sans-serif'}}><main style={{maxWidth:820,margin:'0 auto',padding:'40px 24px 64px',lineHeight:1.75}}><a href={new URLSearchParams(location.search).get("app")==="1"?"/?app=1":"/"} style={{color:'#efae5d',fontSize:14}}>Zurück</a><p style={{letterSpacing:3,fontSize:13,marginTop:32}}>INTEL AI CORE</p><h1>Impressum</h1><section><h2>Anbieter und Kontakt</h2><p>Name: Tufan<br/>E-Mail: <a style={{color:'#efae5d',overflowWrap:'anywhere'}} href="mailto:tufandonmezyurek@gmail.com">tufandonmezyurek@gmail.com</a><br/>Website: intelaicore.org</p></section><section><h2>Gegenstand des Angebots</h2><p>INTEL AI CORE wird als Webanwendung sowie als Desktop-Anwendung für Windows angeboten. INTEL AI CORE ist ein KI-gestützter digitaler Assistent zur Unterstützung bei allgemeinen und geschäftlichen Aufgaben. Einzelne Funktionen befinden sich in Entwicklung und Erprobung.</p></section><section><h2>Hinweise zur KI-Nutzung</h2><p>KI-generierte Antworten können unvollständig, fehlerhaft oder veraltet sein. Prüfe wichtige Informationen und Entwürfe vor ihrer Verwendung. Die Anwendung ersetzt keine individuelle medizinische, rechtliche, steuerliche oder sonstige fachliche Beratung.</p></section><section><h2>Haftung und Verfügbarkeit</h2><p>Eine durchgehende Verfügbarkeit und Fehlerfreiheit des Angebots kann nicht zugesichert werden. Es gelten die gesetzlichen Haftungsbestimmungen. Zwingende Verbraucherrechte bleiben unberührt.</p></section><section><h2>Externe Links</h2><p>Verlinkte Angebote Dritter liegen außerhalb unseres unmittelbaren Einflussbereichs. Hinweise auf rechtswidrige Inhalte können an die oben genannte Kontaktadresse gemeldet werden.</p></section><section><h2>Urheberrecht</h2><p>Für Inhalte, Gestaltung und Software gelten die jeweiligen gesetzlichen Schutzrechte und Lizenzbedingungen. Rechte Dritter bleiben unberührt.</p></section><section><h2>Hinweise zur Datenverarbeitung</h2><p>Zur Bereitstellung des Assistenten können Texte, Sprachdaten und freiwillig übermittelte Bilder an externe KI-Dienste wie Groq, ElevenLabs oder Fish Audio übertragen werden. Bitte übermittle keine Zugangsdaten oder vertraulichen Informationen ohne entsprechende Berechtigung. Diese allgemeinen Hinweise ersetzen keine vollständige Datenschutzerklärung.</p></section></main></div>}
+
+type KeyStatus={test?:{ok:boolean;status:number};available:boolean;providers:{provider:string;configured:boolean}[]}
+function DesktopSetup(){
+ const bridge=(window as Window & {coreDesktop?:{keys?:(action:{kind:string;provider?:string;key?:string})=>Promise<KeyStatus>}}).coreDesktop?.keys
+ const [status,setStatus]=useState<KeyStatus>()
+ const [values,setValues]=useState<Record<string,string>>({})
+ const [error,setError]=useState('')
+ const [busy,setBusy]=useState(false)
+ const [done,setDone]=useState(false)
+ useEffect(()=>{if(bridge)void bridge({kind:'status'}).then(s=>{setStatus(s);setDone(s.providers.some(p=>p.provider==='groq'&&p.configured))}).catch(()=>setError('Schlüsselspeicher nicht verfügbar.'))},[bridge])
+ if(!bridge)return <Assistant/>
+ async function change(provider:string,kind:'save'|'remove'|'test'){
+  if(!bridge)return;setBusy(true);setError('')
+  try{const result=await bridge({kind,provider,...(kind==='save'?{key:values[provider]||''}:{})});setStatus(result);if(result.test)setError(result.test.ok?'Verbindung erfolgreich.':'Verbindung fehlgeschlagen: HTTP '+result.test.status);setValues(v=>({...v,[provider]:''}))}catch{setError('Schlüssel konnte nicht gespeichert oder entfernt werden.')}finally{setBusy(false)}
+ }
+ if(done)return <><Assistant/><button className="action-btn" style={{position:'fixed',bottom:42,right:12,zIndex:900}} onClick={()=>setDone(false)}>API-Schlüssel</button></>
+ return <main style={{position:'fixed',inset:0,overflow:'auto',background:'#080705',color:'#f1d2a5',padding:24}}><section style={{maxWidth:540,margin:'30px auto',display:'grid',gap:16}}><h1>CORE – persönliche Einrichtung</h1><p>Deine Schlüssel bleiben verschlüsselt auf diesem PC. Anfragen werden direkt an den jeweiligen Anbieter gesendet. Der Anbieter kann Kosten berechnen.</p>{['groq','gemini','elevenlabs','tavily'].map(provider=><section key={provider} style={{border:'1px solid #493521',padding:16,borderRadius:10,display:'grid',gap:8}}><strong>{provider} {provider==='groq'?'(erforderlich)':provider==='elevenlabs'?'(optional, Sprachausgabe)':provider==='gemini'?'(optional, Ersatzmodell)':'(optional, Internetrecherche)'}</strong><span>{status?.providers.find(p=>p.provider===provider)?.configured?'Gespeichert':'Nicht eingerichtet'}</span><input type="password" autoComplete="off" aria-label={provider+' API-Schlüssel'} value={values[provider]||''} onChange={e=>setValues(v=>({...v,[provider]:e.target.value}))}/><button className="action-btn" disabled={busy||!status?.available||!values[provider]} onClick={()=>void change(provider,'save')}>Speichern</button><button className="action-btn" disabled={busy||!status?.providers.find(p=>p.provider===provider)?.configured} onClick={()=>void change(provider,'test')}>Verbindung testen{provider==='tavily'?' (1 Suchanfrage)':''}</button><button className="action-btn" disabled={busy||!status?.providers.find(p=>p.provider===provider)?.configured} onClick={()=>void change(provider,'remove')}>Entfernen</button></section>)}<p role="status">{error}</p><button className="action-btn" disabled={busy||!status?.providers.some(p=>p.provider==='groq'&&p.configured)} onClick={()=>setDone(true)}>CORE starten</button></section></main>
+}
+
 function App(){
  const desktopVersion=useDesktopRelease()
  const [assistant,setAssistant]=useState(()=>new URLSearchParams(location.search).get('app')==='1'||matchMedia('(display-mode: standalone)').matches)
  if(location.pathname.replace(/\/$/,'')==='/impressum'||new URLSearchParams(location.search).get('page')==='impressum')return <Impressum/>
- if(assistant)return <Assistant/>
+ if(assistant)return <DesktopSetup/>
  return <div style={{minHeight:'100dvh',overflowY:'auto',background:'#080705',color:'#f1d2a5',fontFamily:'system-ui,sans-serif',position:'fixed',inset:0}}>
  <header style={{maxWidth:1120,margin:'auto',padding:'24px clamp(20px,5vw,64px)',display:'flex',justifyContent:'space-between',alignItems:'center',gap:16,flexWrap:'wrap'}}><strong style={{letterSpacing:3}}>INTEL AI CORE</strong><button className="action-btn" onClick={()=>setAssistant(true)}>Webversion öffnen</button></header>
  <main className="landing-main">
@@ -876,4 +898,4 @@ function App(){
 }
 function LandingOrb(){const level=useRef(0);return <Orb mode="STANDBY" level={level} reduced={true}/>}
 createRoot(document.getElementById('root')!).render(<App/>)
-if(import.meta.env.PROD&&'serviceWorker' in navigator)window.addEventListener('load',()=>void navigator.serviceWorker.register('/sw.js').catch(()=>undefined))
+if(import.meta.env.PROD&&!(window as Window & {coreDesktop?:unknown}).coreDesktop&&'serviceWorker' in navigator)window.addEventListener('load',()=>void navigator.serviceWorker.register('/sw.js').catch(()=>undefined))
