@@ -1,4 +1,4 @@
-const {app,BrowserWindow,session,shell,Tray,Menu,nativeImage,ipcMain,dialog,desktopCapturer,screen}=require('electron');
+const {app,BrowserWindow,session,shell,Tray,Menu,nativeImage,ipcMain,dialog,desktopCapturer,screen,safeStorage}=require('electron');
 const path=require('node:path');
 const fs=require('node:fs/promises');
 const {execFile,spawn}=require('node:child_process');
@@ -61,6 +61,33 @@ else{
  const stopVoice=()=>{if(voiceProcess){voiceProcess.kill();voiceProcess=undefined}};
  app.on('before-quit',stopVoice);
  win.webContents.on('did-start-navigation',(_e,_u,_inPlace,isMainFrame)=>{if(isMainFrame)stopVoice()});
+
+ const keyFile=()=>path.join(app.getPath('userData'),'provider-keys.json');
+ const allowedProviders=new Set(['groq','gemini','elevenlabs','tavily']);
+ let keyQueue=Promise.resolve();
+ async function readKeys(){
+   try{const data=JSON.parse(await fs.readFile(keyFile(),'utf8'));if(!data||typeof data!=='object'||Array.isArray(data))throw Error('Ungültiger Schlüsselspeicher');return data}
+   catch(e){if(e.code==='ENOENT')return {};throw e}
+ }
+ ipcMain.handle('core:keys',async(event,action)=>{
+   if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw Error('Nicht autorisiert');
+   if(!action||!['status','save','remove'].includes(action.kind))throw Error('Ungültige Aktion');
+   const job=keyQueue.then(async()=>{
+     const keys=await readKeys();
+     if(action.kind!=='status'){
+       if(!allowedProviders.has(action.provider))throw Error('Unbekannter Anbieter');
+       if(!safeStorage.isEncryptionAvailable())throw Error('Windows-Schlüsselverschlüsselung nicht verfügbar');
+       if(action.kind==='save'){
+         if(typeof action.key!=='string'||action.key.trim().length<8||action.key.length>2048||/\s/.test(action.key.trim()))throw Error('Ungültiges Schlüssel-Format');
+         keys[action.provider]=safeStorage.encryptString(action.key.trim()).toString('base64');
+       }else delete keys[action.provider];
+       const file=keyFile(),tmp=file+'.tmp';
+       await fs.writeFile(tmp,JSON.stringify(keys),{mode:0o600});await fs.rename(tmp,file);
+     }
+     return {available:safeStorage.isEncryptionAvailable(),providers:[...allowedProviders].map(provider=>({provider,configured:typeof keys[provider]==='string'&&keys[provider].length>0}))};
+   });
+   keyQueue=job.then(()=>undefined,()=>undefined);return job;
+ });
  ipcMain.handle('core:native-voice',async(event,enabled)=>{
  if(event.sender!==win.webContents||event.senderFrame?.parent!==null||!trusted(event.senderFrame.url))throw new Error('Nicht autorisiert');
  stopVoice();if(enabled===false)return;
